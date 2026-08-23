@@ -18,7 +18,7 @@ path for the built-in programs**.
 |---|---|
 | `$6000-$7FFF` | WRAM block 0 — lower half of the free area |
 | `$8000-$9FFF` | WRAM block 1 — upper half (**this is what makes 16KB possible**) |
-| `$A000-$BFFF` | ROM bank 5 (unchanged) |
+| `$A000-$BFFF` | ROM bank 5 — always resident, **patched in place** (`put_a`) |
 | `$C000-$DFFF` | ROM bank 6 (original `$C000-$CFFF` + first half of the relocated interpreter) |
 | `$E000-$FFFF` | ROM bank 7 (second half + title graphic + init + loader + vectors) |
 
@@ -613,6 +613,40 @@ def main():
     old_clear = bank7[coff + 1]
     bank7[coff + 1] = 0xA0                            # CLEAR errors at or above $A000
 
+    # `BGGET`/`BGPUT` share one 1KB screen buffer pinned to the **top of the area**
+    # (`$6C00-$6FFF`, the last kilobyte of the unexpanded `$6000-$6FFF`). Widening the area
+    # does not move it, so it lands in the middle of the user's program and `BGGET` refuses
+    # with `?OM ERROR` as soon as the program passes `$6C00`. Confirmed on hardware
+    # 2026-08-23: a 3,529-byte program printed `12846 BYTES FREE` and then `?OM ERROR`.
+    # These three live in $A000-$BFFF, which the relocation does not move.
+    # The low byte is `$00` in all three, so only the high byte changes.
+    # The addresses below are the **instructions**; the byte that changes is the
+    # immediate that follows, at `addr + 1` ($B1BE / $B1CB / $B20C).
+    # The write itself goes through `put_a()` like every other patch in this bank,
+    # so "every change to bank 5 is funnelled through one checked writer" stays true.
+    # The two-value tolerance ($6C stock, $7C already 8KB-expanded) cannot be expressed
+    # as a single `expect`, so it is checked here and the confirmed value handed on.
+    # **$7C is unreachable today** and reviewers have said so three times (2026-08-23/24):
+    # fb-relocate.py pins its input to the stock V3 by SHA-256, and check_inputs() then
+    # reproduces the relocation byte for byte, so nothing 8KB-expanded can arrive here.
+    # Kept deliberately, for one reason: the constants either side of it - the area top
+    # ($6F/$7F) and the CLEAR ceiling ($70/$80) - carry exactly the same two-value
+    # tolerance and are dead by exactly the same argument. Tightening only the newest of
+    # the three would leave the file inconsistent about its own input contract. If the
+    # contract is ever widened, all three change together; if it is narrowed, all three go.
+    BG_PAGE = 0x9C                                    # $9C00-$9FFF, the last 1KB of 16KB
+    bg_was = set()                                    # what was actually there, for the report
+    for addr, opcode, why in ((0xB1BD, 0xC9, "BGGET: is there room for the buffer"),
+                              (0xB1CA, 0xA9, "BGGET: where to store the screen"),
+                              (0xB20B, 0xA9, "BGPUT: where to read the screen back")):
+        off = addr - 0xA000
+        old_page = resident_a[off + 1]
+        bg_was.add(old_page)
+        if resident_a[off] != opcode or old_page not in (0x6C, 0x7C):
+            sys.exit(f"${addr:04X}: could not find the BGGET/BGPUT buffer "
+                     f"({bytes(resident_a[off:off + 2]).hex(' ')}): {why}")
+        put_a(addr + 1, [old_page], [BG_PAGE], why)
+
     # --- Lay out the banks ---------------------------------------------------
     banks = []
     c_low = rel_prg[0xC000 - 0x8000:0xD000 - 0x8000]  # duplicate kept alive during a swap
@@ -639,6 +673,10 @@ def main():
     print("built the 16KB MMC5 version")
     print(f"  free area $6000-$9FFF (16,384 bytes)"
           f" / end of area ${old_top:02X}FF -> $9FFF / CLEAR ceiling ${old_clear:02X} -> $A0")
+    print(f"  BGGET/BGPUT buffer -> ${BG_PAGE:02X}00-${BG_PAGE + 3:02X}FF"
+          f" (was {'/'.join(f'${p:02X}00' for p in sorted(bg_was))};"
+          f" the immediates at $B1BE/$B1CB/$B20C,"
+          f" i.e. the operands of the instructions at $B1BD/$B1CA/$B20B)")
     print(f"  init ${INIT_ORG:04X} ({len(init.code)} bytes)"
           f" / loader ${LOADER_ORG:04X} ({len(loader.code)} bytes)"
           f" / title graphic ${BG_DEST:04X}-${BG_DEST + 0x3FF:04X}")

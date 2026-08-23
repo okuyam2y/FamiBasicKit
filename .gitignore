@@ -8,3 +8,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# llm-review の進行台帳は作業ファイル（収束時に削除・恒久記録は別ファイルへ転記）
+docs/llm-review-active.md

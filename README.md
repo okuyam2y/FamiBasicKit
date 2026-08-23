@@ -8,7 +8,7 @@ from 4KB to **8KB**, and then to **16KB**.
 | Version | Stock free area | Expanded | What it takes |
 |---|---|---|---|
 | V1.0 / V2.0A / V2.1A | ~2KB | **4KB** | 2 PRG bytes + 1 header byte |
-| V3.0 | 4KB | **8KB** | 2 PRG bytes + 1 header byte |
+| V3.0 | 4KB | **8KB** | 5 PRG bytes + 1 header byte |
 | V3.0 | 4KB | **16KB** | MMC5 conversion + relocating the BASIC interpreter |
 
 **The 16KB build is confirmed working on both the MiSTer FPGA NES core and an
@@ -22,7 +22,8 @@ EverDrive N8 PRO** (`16374 BYTES FREE`; a 9,816-byte program `LIST`s and `RUN`s)
 **The amount of RAM BASIC uses is set by a constant burned into the ROM, not by how
 much RAM is present.** Even when the hardware provides the full 8KB at `$6000-$7FFF`,
 BASIC only touches its hard-coded range and the rest simply does not exist as far as
-BASIC is concerned. So **changing two bytes** widens the area.
+BASIC is concerned. So **changing a constant** widens the area (3 bytes in total for V1/V2, 6 for V3 —
+the `CLEAR` ceiling and, on V3, the `BGGET` buffer are separate constants).
 
 How far you can go depends on where the area *starts*:
 
@@ -47,13 +48,14 @@ flash carts), mapper 0 is enough all the way to 8KB.**
 ./tools/fb-expand-basic-area.py "Family BASIC V3 (Japan).nes" -o "V3 (8KB).nes"
 ```
 
-This changes two PRG bytes plus byte 10 of the iNES header (the NVRAM size declaration).
+This changes 5 PRG bytes for V3 (2 for V1/V2, which have no `BGGET`) plus byte 10 of
+the iNES header (the NVRAM size declaration).
 
 | Goal | Change | Measured on hardware |
 |---|---|---|
 | V1.0 → 4KB | 2 PRG bytes + 1 header byte | `4031 BYTES FREE` |
 | V2.1A → 4KB | 2 PRG bytes + 1 header byte | `4030 BYTES FREE` |
-| V3.0 → 8KB | 2 PRG bytes + 1 header byte | `8182 BYTES FREE` |
+| V3.0 → 8KB | 5 PRG bytes + 1 header byte | `8182 BYTES FREE` |
 
 (Measured on an EverDrive N8 PRO. `BYTES FREE` is the figure with no program loaded.)
 
@@ -71,7 +73,7 @@ The result is an MMC5 (mapper 5) ROM: PRG 64KB / CHR 8KB / NVRAM 16KB.
 |---|---|
 | `$6000-$7FFF` | WRAM block 0 — lower half of the free area |
 | `$8000-$9FFF` | **A second WRAM block** — upper half (bank number probed at boot) |
-| `$A000-$BFFF` | ROM bank 5 (untouched, byte for byte) |
+| `$A000-$BFFF` | ROM bank 5 (always resident; patched in place — see [details](docs/ram-expansion.md)) |
 | `$C000-$DFFF` | ROM bank 6 (original `$C000-$CFFF` + first half of the relocated interpreter) |
 | `$E000-$FFFF` | ROM bank 7 (second half + title graphic + init + loader + vectors) |
 | Banks 0-3 | One built-in program each (lower half duplicates `$C000-$CFFF`) |

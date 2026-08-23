@@ -11,13 +11,16 @@ At boot, Family BASIC stores the **address of the last byte of the program area*
 zero page `$03/$04`. That value is an immediate operand burned into the ROM, so
 **it makes no difference how much RAM the hardware actually provides.**
 
-The `BYTES FREE` figure and the ceiling `CLEAR` will accept both come from those two
-bytes. Rewriting them is all it takes.
+The `BYTES FREE` figure comes from those two bytes, and rewriting them is what widens
+the area. **It is not the whole patch**: the ceiling `CLEAR` will accept is a separate
+constant, and on V3 so is the buffer `BGGET`/`BGPUT` writes into. Each has to be raised
+on its own — see the three sites below.
 
-There are two sites:
+There are three sites:
 
 1. **Boot-time init** — the immediate loaded into zero page `$03/$04`
 2. **The `CLEAR` argument check** — a hard-coded "error if at or above this address" ceiling
+3. **The `BGGET`/`BGPUT` buffer** (V3 only) — see below
 
 ⚠️ **V1.0 alone treats `$03/$04` as "the address *after* the last byte"** (`$7800`).
 V2/V3 store the address of the last byte itself (`$77FF` / `$6FFF`). Tell them apart by
@@ -44,11 +47,41 @@ NES 2.0 header, **the high nibble of byte 10** is the NVRAM size
 | V1/V2 → 4KB | `$50` → `$60` |
 | V3 → 8KB | `$60` → `$70` |
 
-So the **total change is 2 PRG bytes plus 1 header byte.**
+So the **total change is 5 PRG bytes plus 1 header byte** for V3, and 2 PRG bytes plus
+1 header byte for V1/V2 (which have no `BGGET`).
 
-`fb-expand-basic-area.py` writes all three (doubling the declaration). Pass
+`fb-expand-basic-area.py` writes them all (doubling the declaration). Pass
 `--keep-header` to leave the header alone — but **that ROM will have no effect on real
 hardware.**
+
+### The `BGGET`/`BGPUT` buffer follows the top of the area
+
+`BGGET` saves a background screen into RAM and `BGPUT` puts it back. The 1KB buffer they
+share is **pinned to the top of the area** by three immediates holding its high byte
+(the low byte is `$00` in all three):
+
+| Address | Instruction | Role |
+|---|---|---|
+| `$B1BD` | `CMP #>buf` | `BGGET`: is there room above the program for the buffer? |
+| `$B1CA` | `LDA #>buf` | `BGGET`: where to store the screen |
+| `$B20B` | `LDA #>buf` | `BGPUT`: where to read it back from |
+
+Stock V3 has `$6C` there, so the buffer is `$6C00-$6FFF` — the last kilobyte of the
+stock `$6000-$6FFF`. **Widening the area does not move it**, so it ends up in the middle
+of the user's program, and the check at `$B1BD` refuses with `?OM ERROR` as soon as the
+program passes `$6C00` however much room is really left.
+
+That was a real defect here until 2026-08-23. On hardware, a 3,529-byte program on the
+16KB build printed `12846 BYTES FREE` and then `?OM ERROR IN 10`.
+
+So the buffer moves with the ceiling: `$7C00` for 8KB, `$9C00` for 16KB.
+
+⚠️ **These are the only three references.** Two disassemblers agree independently:
+`fb-disasm.py` finds exactly three `#$6C` immediates among instructions reachable from a
+vector, and zero 16-bit references into `$6C00-$6FFF`; the annotated disassembly at
+[micahcowan/fbdasm](https://github.com/micahcowan/fbdasm) names the same three. The two
+`$6Cxx` values at `$8007`/`$8009` are the end addresses of built-in programs 2 and 3 —
+**unrelated, and they must not be changed.**
 
 ### ⚠️ What not to touch
 
@@ -78,7 +111,7 @@ fold back onto the same storage.
 | Boot V1/V2 on an EverDrive | **just add the header** (a missing header is what causes `Unformatted ROM`) |
 | V1.0 → 4KB | 2 PRG bytes + 1 header byte |
 | V2.1A → 4KB | 2 PRG bytes + 1 header byte |
-| V3 → 8KB | 2 PRG bytes + 1 header byte |
+| V3 → 8KB | 5 PRG bytes + 1 header byte |
 | **V3 → 16KB** | **MMC5** (map RAM into `$8000-$9FFF` as well) |
 
 ⚠️ `BYTES FREE` is the figure **with no program loaded**. With a `.sav` in place
@@ -103,10 +136,26 @@ option.
 |---|---|
 | `$6000-$7FFF` | WRAM block 0 (lower half of the free area) |
 | `$8000-$9FFF` | **A second WRAM block** (upper half; bank number probed at boot → [mmc5-wram-banks.md](mmc5-wram-banks.md)) |
-| `$A000-$BFFF` | ROM bank 5 (untouched, byte for byte) |
+| `$A000-$BFFF` | ROM bank 5 (always resident; **patched in place**, see below) |
 | `$C000-$DFFF` | ROM bank 6 (original `$C000-$CFFF` + first half of the relocated interpreter) |
 | `$E000-$FFFF` | ROM bank 7 (second half + title graphic + init + loader + vectors) |
 | Banks 0-3 | One built-in program each (lower half duplicates `$C000-$CFFF`) |
+
+#### What bank 5 gets patched with
+
+Bank 5 is the half of the interpreter the relocation does **not** move, so its addresses
+stay where they were — but it is not a byte-for-byte copy of the source ROM. Every write
+into it goes through `put_a()` in `fb-mmc5-16k.py`, which refuses to proceed unless the
+bytes it is about to replace are the ones it expects:
+
+| Address written | What | Why |
+|---|---|---|
+| `$AD96` | `GAME` load entry | rerouted to the rebuilt loader |
+| `$ADD5` / `$ADF2` | title-graphic copy, source and end | the graphic moved out of `$D000` |
+| `$B1BE` / `$B1CB` / `$B20C` | `BGGET`/`BGPUT` buffer page — **the operands** of the instructions at `$B1BD` / `$B1CA` / `$B20B` | follows the top of the widened area |
+
+**Do not use "bank 5 equals the original ROM" as a verification oracle** — it does not, by
+design. The oracle for the whole build is the MD5 of the output.
 
 ### `$5117` never has to be written
 

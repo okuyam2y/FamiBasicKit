@@ -17,13 +17,18 @@ how much RAM is present**. Even when a core or a flash cart provides the full 8K
 V1/V2 **start** the area at `$7000`, so widening without moving the start caps out at
 4KB. V3 starts at `$6000` and reaches 8KB (**V3 is the roomiest**).
 
-## Only three bytes change
+## What changes: 3 bytes for V1/V2, 6 for V3
 
 1. **Boot-time init** — the constant that loads "end of area" into zero page `$03/$04`.
    That alone widens the area, `BYTES FREE` display included
 2. **The `CLEAR` argument check** — a hard-coded "error if at or above this address"
-   ceiling. Raising it lets `CLEAR` address the widened area
-3. **Byte 10 of the NES 2.0 header** — the PRG-NVRAM size. **Without this the first two
+   ceiling. It is a *separate* constant: raising the one above does not raise this one,
+   and `CLEAR` keeps refusing the new space until it is raised too
+3. **The `BGGET`/`BGPUT` buffer (V3 only, 3 bytes)** — one 1KB screen buffer pinned to
+   the top of the area by three immediates. Also separate constants: leave them and the
+   buffer stays in what is now the middle of the user's program, and `BGGET` errors out
+   as soon as the program passes it
+4. **Byte 10 of the NES 2.0 header** — the PRG-NVRAM size. **Without this the PRG
    changes do nothing on real hardware**, because the machine only provides as much RAM
    as the header declares. The declared size is doubled (`5`→`6` = 2KB→4KB for V1/V2,
    `6`→`7` = 4KB→8KB for V3). Pass `--keep-header` to skip it
@@ -50,14 +55,36 @@ import sys
 #   LDA #$03 / STA $56 [/ STA $E3]   (only V3 has the STA $E3)
 # to make it unique.
 PAT_TOP = re.compile(rb"\xA9\x03\x85\x56(?:\x85.)?\xA9(.)\x85\x04", re.S)
-# The CLEAR argument check: LDA $0401 / CMP #<hi> / BCS <error>
+# The CLEAR argument check: LDA $0401 / CMP #>limit / BCS <error>
 PAT_CLEAR = re.compile(rb"\xAD\x01\x04\xC9(.)\xB0", re.S)
 # Marker for the "address of the last byte" convention: LDA #$FF / STA $03
 MARK_INCLUSIVE = b"\xA9\xFF\x85\x03"
 
+# `BGGET` and `BGPUT` share one 1KB screen buffer that sits at the **top of the area**:
+# `$6C00-$6FFF`, the last kilobyte of the unexpanded `$6000-$6FFF`. Widening the area does
+# not move it, so it ends up in the middle of the user's program. `BGGET` then refuses with
+# `?OM ERROR` as soon as the program passes `$6C00`, however much room is really left.
+# Confirmed on hardware 2026-08-23: a 3,529-byte program on the 16KB build printed
+# `12846 BYTES FREE` and then `?OM ERROR IN 10`.
+#
+# Three immediates hold the high byte (the low byte is `$00` in all three). The two
+# patterns pin whole routine prologues rather than the immediates alone, so a match
+# cannot land on an unrelated `#$6C`:
+#   BGGET  JSR Clear / LDA $20 / CMP #>buf / BCS err / LDA #$0C / JSR nmi
+#          / LDA #$00 / STA $19 / LDA #>buf / STA $1A
+#   BGPUT  LDA $6004 / BEQ err / LDA #$0C / JSR nmi / LDA #>buf / STA $1A
+#          / LDA #$00 / STA $19
+# **V3 only** - V1/V2 have neither command, and neither pattern matches there.
+PAT_BGGET = re.compile(
+    rb"\x20..\xA5\x20\xC9(.)\xB0.\xA9\x0C\x20..\xA9\x00\x85\x19\xA9(.)\x85\x1A", re.S)
+PAT_BGPUT = re.compile(
+    rb"\xAD\x04\x60\xF0.\xA9\x0C\x20..\xA9(.)\x85\x1A\xA9\x00\x85\x19", re.S)
+BG_PAGE_OLD = 0x6C               # $6C00, the last 1KB of the unexpanded area
+
 WANT_TOP_INCLUSIVE = 0x7F        # $7FFF
 WANT_TOP_EXCLUSIVE = 0x80        # $8000 (one past the last)
 WANT_CLEAR_LIMIT = 0x80          # CLEAR becomes "error at or above $8000"
+WANT_BG_PAGE = 0x7C              # $7C00-$7FFF, the last 1KB of the widened area
 
 # NES 2.0 header byte 10: the low nibble is volatile PRG-RAM, the high nibble PRG-NVRAM.
 # The size is 64 << nibble bytes, so 5=2KB, 6=4KB, 7=8KB, 8=16KB.
@@ -132,8 +159,44 @@ def expand(path, out_path, keep_header=False):
     out[body_off + clr_off] = WANT_CLEAR_LIMIT
     changed = {body_off + top_off, body_off + clr_off}
 
+    # The BGGET/BGPUT buffer follows the top of the area. Only V3 has those two
+    # commands, and **which version this is gets decided structurally**, from the
+    # "end of area" constant already validated above — not from the printable version
+    # string. The string is not load-bearing anywhere else, so a ROM whose copy of it
+    # is damaged would otherwise skip this patch without a word and ship a build whose
+    # widened program area overlaps the buffer.
+    # V1/V2 put the area at `$7000` and V3 at `$6000`, so the top lands in a different
+    # page (measured on the four dumps: V1.0 `$78`, V2.0A/V2.1A `$77`, V3.0 `$6F`).
+    is_v3 = top_old < 0x70
+    bgget = list(PAT_BGGET.finditer(scan))
+    bgput = list(PAT_BGPUT.finditer(scan))
+    # Compare against the expected count, not against a boolean. Writing this as
+    # `is_v3 != (len(bgget) == 1 and len(bgput) == 1)` let a non-V3 image with a
+    # partial match through: one BGGET and no BGPUT makes the right side false,
+    # which equals `is_v3`, so nothing fired even though the message promises
+    # "expected none".
+    want = 1 if is_v3 else 0
+    if len(bgget) != want or len(bgput) != want:
+        raise ValueError(
+            f"BGGET/BGPUT: the area top is ${top_old:02X}xx, so this "
+            f"{'is' if is_v3 else 'is not'} V3, but BGGET matched {len(bgget)} time(s) "
+            f"and BGPUT {len(bgput)} time(s) (expected {want} each). "
+            f"Version string: {version_string(scan)}")
+    if is_v3:
+        for m in (bgget[0], bgput[0]):
+            for g in range(1, m.re.groups + 1):
+                off = m.start(g)
+                if scan[off] != BG_PAGE_OLD:
+                    raise ValueError(f"${0x8000 + off:04X}: the BGGET/BGPUT buffer is "
+                                     f"${scan[off]:02X}00, expected ${BG_PAGE_OLD:02X}00")
+                print(f"  BG buffer     ${0x8000 + off - 1:04X}  "
+                      f"#${BG_PAGE_OLD:02X} -> #${WANT_BG_PAGE:02X}"
+                      f"   (BGGET/BGPUT, ${WANT_BG_PAGE:02X}00-${WANT_BG_PAGE + 3:02X}FF)")
+                out[body_off + off] = WANT_BG_PAGE
+                changed.add(body_off + off)
+
     # The header declaration. Without this the machine never provides the extra RAM,
-    # so the two PRG bytes above have no visible effect.
+    # so the PRG changes above have no visible effect.
     if not keep_header:
         if data[7] & 0x0C != 0x08:
             raise ValueError("not a NES 2.0 header, so byte 10 is not the NVRAM size. "
