@@ -50,15 +50,19 @@ the shorthand quote is stored raw.
 
 **The ground truth is the contents of the ROM, not my understanding of them.** It decodes
 the four built-in programs (387 lines), re-encodes them, and demands not one byte differs.
-The reserved-word table is re-read from `$CCAB` in the ROM and cross-checked too.
+
+The reserved-word table is re-read from the ROM and cross-checked too - **for whichever
+version the ROM is**. Pass a V2 dump and it checks the V2 list; only V3 has built-in
+programs to round-trip, so that part is skipped there. Running it against V3 alone is what
+let `SCR$` sit missing from the V2 list.
 ```
 
 A `00` terminator follows the last line. The end pointer addresses **the byte after it**.
 
-The token table differs by version: 87 words from `$C120-$C2BF` for the V2 series (Rev 2),
-**109 words from `$CCAB-$CEBD` for V3** (`TR` `GAME` `SCR$` `INSTR` `RESUME` and 18 more
-are added in V3). Using the old 87-word table on V3 turns every added word into individual
-ASCII characters and breaks it silently.
+The token table differs by version: **88 words at `$C128-$C2C5` for the V2 series**
+(Rev 2) and **109 at `$CCAB-$CEBE` for V3** (`TR` `GAME` `INSTR` `RESUME` and 18 more are
+V3 additions). Using the V2 table on V3 turns every added word into individual ASCII
+characters and breaks the program silently.
 """
 
 import argparse
@@ -104,6 +108,9 @@ TOKENS_V2 = [
     ("PEEK", 0xCF), ("SGN", 0xD1), ("TAB", 0xD3), ("XPOS", 0xD7),
     # FOR was added after cross-checking the whole table against the ROM. It had been
     # missing, so "FOR" turned into "F" plus the OR token. Keep it ahead of "OR".
+    # SCR$ was missing too, and for longer: the table check below only ever ran against
+    # a V3 ROM, so nothing compared the V2 list to anything until 2026-08-24.
+    ("SCR$", 0xE1),
     ("YPOS", 0xD8), ("FOR", 0x8C), ("RUN", 0x82), ("DIM", 0x94), ("REM", 0x95),
     ("CLS", 0x98), ("OFF", 0x9B), ("CUT", 0x9C), ("NEW", 0x9D),
     ("END", 0xA2), ("KEY", 0xA8), ("DEF", 0xAA), ("ERA", 0xB0),
@@ -377,6 +384,78 @@ def build_program(source, tokens, small_digits):
 BUILTIN_PROGRAMS = (0xD400, 0xDBFE, 0xE682, 0xF308)
 
 
+def read_token_table(prg):
+    """Pull the reserved words straight out of a PRG image.
+
+    The table is `<token><word>` pairs, tokens from `$80` up, terminated by `$FF`. It is
+    found by its first entry rather than by address, because V2 and V3 keep it in
+    different places (`$C128` and `$CCAB`)."""
+    i = prg.find(b"\x80GOTO")
+    if i < 0:
+        raise ValueError("reserved-word table not found")
+    out = []
+    while prg[i] != 0xFF:
+        tok, i = prg[i], i + 1
+        word = ""
+        while prg[i] < 0x80:
+            word += chr(prg[i])
+            i += 1
+        out.append((word, tok))
+    return out
+
+
+# Where each index space starts. A command's entry in the dispatch table is at
+# `token - $80`, a function's at `token - $CA`, so **the two spaces are not
+# interchangeable and neither can be reordered**. `$EF-$FD` are the operators, handled
+# elsewhere, and `$FF` terminates the reserved-word table.
+CMD_BASE, FN_BASE, OP_BASE, TABLE_END = 0x80, 0xCA, 0xEF, 0xFF
+
+
+def show_tokens(rom_path):
+    """Print what a dump actually uses, and what is left.
+
+    Adding a command means picking a number, and picking it off a hand-written table is
+    how the wrong one gets picked. This reads the dump.
+
+    A command's entry in the dispatch table is at `token - $80` and a function's at
+    `token - $CA`, so a number can only be appended - inserting one in the middle shifts
+    every word after it, and every program ever saved becomes a different program."""
+    raw = open(rom_path, "rb").read()
+    if raw[:4] != b"NES\x1a":
+        sys.exit(f"{rom_path}: not an iNES header")
+    prg = raw[16:16 + raw[4] * 16384]
+    m = re.search(rb"NS-HUBASIC V\d\.\d[A-Z]?", prg)
+    used = dict((t, w) for w, t in read_token_table(prg))
+
+    print(f"## {rom_path}")
+    print(f"  {m.group(0).decode() if m else '(no version string)'} / "
+          f"{len(used)} reserved words")
+    for name, lo, hi in (("commands ", CMD_BASE, FN_BASE - 1),
+                         ("functions", FN_BASE, OP_BASE - 1)):
+        taken = [t for t in range(lo, hi + 1) if t in used]
+        free = [t for t in range(lo, hi + 1) if t not in used]
+        print()
+        print(f"  {name} ${lo:02X}-${hi:02X}: {len(taken)} used, {len(free)} free")
+        for t in taken:
+            print(f"    ${t:02X}  {used[t]}")
+        print(f"    free: {ranges(free) or '(none)'}")
+    print()
+    print(f"  operators ${OP_BASE:02X}-${TABLE_END - 2:02X}: "
+          + " ".join(f"${t:02X}={used[t]}" for t in range(OP_BASE, TABLE_END - 1)
+                     if t in used))
+    return True
+
+
+def ranges(values):
+    out = []
+    for v in sorted(values):
+        if out and v == out[-1][1] + 1:
+            out[-1][1] = v
+        else:
+            out.append([v, v])
+    return ", ".join(f"${a:02X}" if a == b else f"${a:02X}-${b:02X}" for a, b in out)
+
+
 def selftest(rom_path):
     """**Test the converter against the ROM built-in programs as ground truth.**
 
@@ -387,34 +466,33 @@ def selftest(rom_path):
     """
     raw = open(rom_path, "rb").read()
     if raw[:4] != b"NES\x1a" or raw[4] != 2:
-        sys.exit(f"{rom_path}: not a stock V3 (iNES with a 32KB PRG)")
+        sys.exit(f"{rom_path}: not a Family BASIC dump (iNES with a 32KB PRG)")
     prg = raw[16:16 + 0x8000]
 
     def cpu(a):
         return prg[a - 0x8000]
 
-    # Re-read the reserved-word table from the ROM and cross-check it against the
-    # built-in TOKENS_V3. **A skewed table would round-trip unnoticed**, so pin it here
-    i = prg.find(b"\x80GOTO")
-    if i < 0:
-        sys.exit(f"{rom_path}: reserved-word table not found")
-    a = 0x8000 + i
-    from_rom = []
-    while cpu(a) >= 0x80:
-        tok = cpu(a)
-        j, word = a + 1, ""
-        while cpu(j) < 0x80 and 0x20 <= cpu(j) < 0x7F:
-            word += chr(cpu(j))
-            j += 1
-        if not word:
-            break
-        from_rom.append((word, tok))
-        a = j
-    if sorted(from_rom) != sorted(TOKENS_V3):
-        only_rom = sorted(set(from_rom) - set(TOKENS_V3))
-        only_tbl = sorted(set(TOKENS_V3) - set(from_rom))
-        sys.exit(f"reserved-word table disagrees with the ROM. ROM only: {only_rom} / table only: {only_tbl}")
+    m = re.search(rb"NS-HUBASIC V(\d)\.\d[A-Z]?", prg)
+    if not m:
+        sys.exit(f"{rom_path}: no version string, so which table to check is unknown")
+    version = "v3" if m.group(1) == b"3" else "v2"
+    print(f"  {m.group(0).decode()} -> checking the {version.upper()} table")
+
+    # Re-read the reserved-word table from the ROM and cross-check it against the built-in
+    # list. **A skewed list would round-trip unnoticed**, so pin it here. This ran against
+    # V3 only until 2026-08-24, which is how `SCR$` stayed missing from the V2 list.
+    from_rom = read_token_table(prg)
+    table = TOKENS_V3 if version == "v3" else TOKENS_V2
+    if sorted(from_rom) != sorted(table):
+        only_rom = sorted(set(from_rom) - set(table))
+        only_tbl = sorted(set(table) - set(from_rom))
+        sys.exit(f"the {version.upper()} reserved-word list disagrees with the ROM. "
+                 f"ROM only: {only_rom} / list only: {only_tbl}")
     print(f"  reserved-word table: matches all {len(from_rom)} words in the ROM")
+
+    if version != "v3":
+        print("  (only V3 carries built-in programs, so the round-trip is skipped)")
+        return True
 
     tokens = TOKENS_BY_VERSION["v3"]
     ok = True
@@ -469,10 +547,16 @@ def main():
     ap.add_argument("--base", help="an existing .sav to build on (carries over names and so on)")
     ap.add_argument("--dump", action="store_true", help="print the generated bytes")
     ap.add_argument("--selftest", metavar="ROM",
-                    help="given a stock V3 .nes, decode and re-encode the four built-in "
-                         "programs and check that not one byte differs (no source needed)")
+                    help="check the reserved-word list against a Family BASIC .nes, "
+                         "and for V3 also decode and re-encode the four built-in programs "
+                         "and demand not one byte differs (no source needed)")
+    ap.add_argument("--tokens", metavar="ROM",
+                    help="print the reserved words a dump uses and the numbers left over, "
+                         "for picking one when adding a command")
     args = ap.parse_args()
 
+    if args.tokens:
+        sys.exit(0 if show_tokens(args.tokens) else 1)
     if args.selftest:
         sys.exit(0 if selftest(args.selftest) else 1)
     if not args.source or not args.output:

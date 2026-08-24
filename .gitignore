@@ -1,6 +1,8 @@
 # ROM・セーブデータは絶対にコミットしない（このリポジトリは道具と解説だけを配る）
 *.nes
 *.sav
+*.fds
+fds-boot-screen.png
 *.ss
 *.bin
 *.rom
