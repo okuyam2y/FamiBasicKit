@@ -95,6 +95,10 @@ def load(path):
     d = open(path, "rb").read()
     if d[:4] != b"NES\x1a":
         raise ValueError(f"{path}: not an iNES header")
+    # The magic matching does not mean the rest of the header is there, and `h[6]`/`h[4]`
+    # below index into it - a short file would raise IndexError past the ValueError handling
+    if len(d) < 16:
+        raise ValueError(f"{path}: an iNES header is 16 bytes, this file is {len(d)}")
     h = d[:16]
     off = 16 + (512 if h[6] & 0x04 else 0)
     prg_size = h[4] * 16384

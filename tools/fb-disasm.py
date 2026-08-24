@@ -101,6 +101,11 @@ class Rom:
         raw = open(path, "rb").read()
         if raw[:4] != b"NES\x1a":
             sys.exit(f"{path}: no iNES header")
+        # The magic matching says nothing about the remaining 12 header bytes existing, and
+        # every check below indexes into them. Indexing a short file raises IndexError as a
+        # raw traceback instead of the usual one-line exit
+        if len(raw) < 16:
+            sys.exit(f"{path}: an iNES header is 16 bytes, this file is {len(raw)}")
         # With a trainer the PRG starts 512 bytes later. Without this check the whole
         # disassembly would be shifted and it would report "0 references"
         if raw[6] & 0x04:

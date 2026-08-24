@@ -2,14 +2,16 @@
 *.nes
 *.sav
 *.fds
-fds-boot-screen.png
 *.ss
 *.bin
 *.rom
+*.unf
 
 __pycache__/
 *.pyc
 .DS_Store
 
-# llm-review の進行台帳は作業ファイル（収束時に削除・恒久記録は別ファイルへ転記）
-docs/llm-review-active.md
+# テストが失敗したときに残す画面のコピー。名指しでなく総称にしてあるのは、この
+# ファイルが公開されるため — 特定の成果物名を書くと、それを作る非公開のテストが
+# 在ることまで公開側に出る
+*.png

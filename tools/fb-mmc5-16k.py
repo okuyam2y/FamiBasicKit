@@ -163,6 +163,11 @@ def check_inputs(rel, orig, orig_path, delta):
     for name, data in (("--relocated", rel), ("--original", orig)):
         if data[:4] != b"NES\x1a":
             sys.exit(f"{name}: no iNES header")
+        # Matching the magic says nothing about the other 12 header bytes being there, and
+        # every check below indexes into them - a short file would raise IndexError instead
+        # of the one-line exit every other malformed input gets
+        if len(data) < 16:
+            sys.exit(f"{name}: an iNES header is 16 bytes, this file is {len(data)}")
         if data[6] & 0x04:
             sys.exit(f"{name}: ROMs with a trainer are not supported")
         if data[4] != 2:

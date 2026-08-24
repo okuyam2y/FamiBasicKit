@@ -60,8 +60,8 @@ let `SCR$` sit missing from the V2 list.
 A `00` terminator follows the last line. The end pointer addresses **the byte after it**.
 
 The token table differs by version: **88 words at `$C128-$C2C5` for the V2 series**
-(Rev 2) and **109 at `$CCAB-$CEBE` for V3** (`TR` `GAME` `INSTR` `RESUME` and 18 more are
-V3 additions). Using the V2 table on V3 turns every added word into individual ASCII
+(Rev 2) and **109 at `$CCAB-$CEBE` for V3** (`TR` `GAME` `INSTR` `RESUME` and 17 more are
+V3 additions - 21 in all, the difference between the two counts). Using the V2 table on V3 turns every added word into individual ASCII
 characters and breaks the program silently.
 """
 
@@ -125,11 +125,15 @@ TOKENS_V2 = [
 
 
 # V3.0 reserved words. **Built by reading the <token><word> sequence out of the ROM at
-# `$CCAB-$CEBD`.** The old 87-word table came from V2.1A and was missing the 22 words V3
-# adds (`TR` `FIND` `GAME` `BGTOOL` `AUTO` `DELETE` `RENUM` `FILTER` `CLICK` `SCREEN`
-# `BACKUP` `ERROR` `RESUME` `BGPUT` `BGGET` `CAN` `SCR$` `INSTR` `CRASH` `ERR` `ERL`
-# `VCT`). Converting without them turns those words into individual ASCII characters and
-# breaks the program silently.
+# `$CCAB-$CEBE`.** An older hand-written table came from V2.1A and was missing the 21 words
+# V3 adds (`TR` `FIND` `GAME` `BGTOOL` `AUTO` `DELETE` `RENUM` `FILTER` `CLICK` `SCREEN`
+# `BACKUP` `ERROR` `RESUME` `BGPUT` `BGGET` `CAN` `INSTR` `CRASH` `ERR` `ERL` `VCT`).
+# Converting without them turns those words into individual ASCII characters and breaks
+# the program silently.
+#
+# `SCR$` is **not** one of them: V2.1A has it too, at the same `$E1`. It was listed here as
+# a V3 addition, and counted V2.1A at 87 words instead of 88 - the same word that went
+# missing from a hand-written copy once before. Corrected from both ROMs.
 # WARNING: **these words cannot be used as variable names** (BASIC has the same rule).
 TOKENS_V3 = [
     ("GOTO", 0x80), ("GOSUB", 0x81), ("RUN", 0x82), ("RETURN", 0x83),
@@ -310,16 +314,51 @@ def decode_body(data, tokens, small_digits=True):
         escaped += 1
         return "\\x%02X" % b
 
+    def keep_tail(text):
+        """Spaces at the end of a line, escaped so they survive the trip back.
+
+        `build_program` strips each source line's tail, and has to: trailing whitespace in
+        a text file is noise, and that strip is also what handles CRLF input. So a line
+        that really ends in spaces came back one or two bytes shorter, with nothing said -
+        `--extract` then `--insert` quietly rewrote it and still reported that every byte
+        was understood. Escaped, the bytes survive and are counted."""
+        nonlocal escaped
+        n = len(data) - len(bytes(data).rstrip(b"\x20"))
+        if n and text.endswith(" " * n):
+            escaped += n
+            return text[:-n] + "\\x20" * n
+        return text
+
     while i < len(data):
         b = data[i]
         if b == 0x22:                                   # string
             j = i + 1
             while j < len(data) and data[j] != 0x22:
                 j += 1
+            if j >= len(data):
+                # The line ends inside the string. Closing it here made the text look
+                # finished, reported nothing unread, and cost a byte on the way back:
+                # re-encoding `PRINT"X"` gives four bytes where the disk had three, so
+                # extract-then-insert silently rewrote the program.
+                #
+                # Escaping the quote and everything after it keeps the bytes exactly, and
+                # puts them in the count of what was not understood - which is the honest
+                # answer, because whether this line is legal is a question about the
+                # machine and nothing in this repository settles it.
+                for x in data[i:]:
+                    escaped += 1
+                    out.append("\\x%02X" % x)
+                i = len(data)
+                continue
             out.append('"' + "".join(raw(x) for x in data[i + 1:j]) + '"')
             i = j + 1
             continue
         if b in (0x0B, 0x11, 0x12):
+            # A two-byte number needs two bytes after the token. A line that ends in the
+            # middle of one is a corrupt line, not an IndexError.
+            if i + 2 >= len(data):
+                raise ValueError(f"a number token ${b:02X} at offset {i} has only "
+                                 f"{len(data) - i - 1} of its 2 bytes")
             v = data[i + 1] | (data[i + 2] << 8)
             out.append("&H%04X" % v if b == 0x11 else str(v))
             i += 3
@@ -333,14 +372,14 @@ def decode_body(data, tokens, small_digits=True):
             i += 1
             if rev[b] in RAW_AFTER:                     # raw from here on
                 out.append("".join(raw(x) for x in data[i:]))
-                return "".join(out), escaped
+                return keep_tail("".join(out)), escaped
             continue
         if b == 0x27:                                   # shorthand for REM
             out.append("'" + "".join(raw(x) for x in data[i + 1:]))
-            return "".join(out), escaped
+            return keep_tail("".join(out)), escaped
         out.append(raw(b))
         i += 1
-    return "".join(out), escaped
+    return keep_tail("".join(out)), escaped
 
 
 def encode_line(number, body_text, tokens, small_digits):
@@ -393,15 +432,31 @@ def read_token_table(prg):
     i = prg.find(b"\x80GOTO")
     if i < 0:
         raise ValueError("reserved-word table not found")
+    # Every read is bounds-checked. The table is found in a file, and a file can be
+    # truncated in the middle of one: walking off the end then raised a bare IndexError
+    # with a traceback, past every "refuse in words" message the callers put in front of it
+    # A `ValueError` is what the callers already catch.
     out = []
-    while prg[i] != 0xFF:
+    while True:
+        if i >= len(prg):
+            raise ValueError("the reserved-word table runs to the end of the image "
+                             "without its $FF terminator")
+        if prg[i] == 0xFF:
+            return out
         tok, i = prg[i], i + 1
         word = ""
-        while prg[i] < 0x80:
+        while i < len(prg) and prg[i] < 0x80:
             word += chr(prg[i])
             i += 1
+        if i >= len(prg):
+            raise ValueError(f"the word for token ${tok:02X} runs to the end of the image")
+        # A token with no word is not a reserved word. Accepting one put an empty string in
+        # the table, which decodes to nothing (the token vanishes from the listing, counted
+        # as understood) and matches at every position when encoding.
+        if not word:
+            raise ValueError(f"token ${tok:02X} in the reserved-word table has no word - "
+                             f"the next byte is ${prg[i]:02X}, another token")
         out.append((word, tok))
-    return out
 
 
 # Where each index space starts. A command's entry in the dispatch table is at
@@ -418,11 +473,17 @@ def show_tokens(rom_path):
     how the wrong one gets picked. This reads the dump.
 
     A command's entry in the dispatch table is at `token - $80` and a function's at
-    `token - $CA`, so a number can only be appended - inserting one in the middle shifts
-    every word after it, and every program ever saved becomes a different program."""
+    `token - $CA`. That table is positional, so a number can only be appended: inserting an
+    entry in its middle moves every later handler one slot out of step with the token that
+    selects it. (The reserved-word table this reads is not positional - it carries an
+    explicit token byte per entry - so it is the dispatch table that forces this, and
+    changing a number an existing word already has is what makes every program ever saved
+    a different program.)"""
     raw = open(rom_path, "rb").read()
     if raw[:4] != b"NES\x1a":
         sys.exit(f"{rom_path}: not an iNES header")
+    if len(raw) < 16:
+        sys.exit(f"{rom_path}: an iNES header is 16 bytes, this file is {len(raw)}")
     prg = raw[16:16 + raw[4] * 16384]
     m = re.search(rb"NS-HUBASIC V\d\.\d[A-Z]?", prg)
     used = dict((t, w) for w, t in read_token_table(prg))
@@ -465,7 +526,7 @@ def selftest(rom_path):
     they are counted and reported (a high count makes "it passed" mean little).
     """
     raw = open(rom_path, "rb").read()
-    if raw[:4] != b"NES\x1a" or raw[4] != 2:
+    if len(raw) < 16 or raw[:4] != b"NES\x1a" or raw[4] != 2:
         sys.exit(f"{rom_path}: not a Family BASIC dump (iNES with a 32KB PRG)")
     prg = raw[16:16 + 0x8000]
 
@@ -530,7 +591,11 @@ def selftest(rom_path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
+    # `allow_abbrev=False`: argparse accepts `--ver v2` as `--version v2` by default, and
+    # the check below - which asks whether the option was typed - looks for the full name
+    # and misses it. Turning abbreviation off is the smaller change and removes a whole
+    # class of "the parser accepted something the code does not know about".
+    ap = argparse.ArgumentParser(allow_abbrev=False, description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("source", nargs="?", help="the BASIC source text file")
     ap.add_argument("-o", "--output", help="the .sav to write")
@@ -555,9 +620,49 @@ def main():
                          "for picking one when adding a command")
     args = ap.parse_args()
 
-    if args.tokens:
+    # `--selftest` and `--tokens` read a ROM and print; they write nothing and convert
+    # nothing. Accepting the conversion arguments alongside them and ignoring them meant
+    # `--selftest ROM -o out.sav` exited 0 with no `out.sav` anywhere - a success that says
+    # a file was written when none was.
+    # The two of them together ran only one and exited 0, so `--selftest A --tokens B`
+    # reported success for a round-trip check it never performed.
+    # `is not None`, not truthiness. `--selftest ""` - which is what an unset shell
+    # variable expands to - read as "not given", so `--selftest "$A" --tokens "$B"` with
+    # one of them empty ran the other and exited 0. An option that was
+    # typed was typed, whatever its value; an empty ROM path is an error, not an absence.
+    for flag, value in (("--selftest", args.selftest), ("--tokens", args.tokens),
+                        ("-o", args.output), ("--base", args.base)):
+        if value is not None and not value:
+            ap.error(f"{flag} was given an empty name")
+    if args.selftest is not None and args.tokens is not None:
+        ap.error("--selftest and --tokens each read a ROM and print; run one at a time")
+    for flag, value in (("--selftest", args.selftest), ("--tokens", args.tokens)):
+        if value is None:
+            continue
+        # `-V` too: it picks the layout for a conversion, and neither of these converts.
+        # Listing the arguments by hand is what left it out the first time; the rule is
+        # every argument that only means something to the conversion path.
+        # `is not None` for anything that takes a value, and `sys.argv` for `-V`, whose
+        # default is a real string - comparing against the default cannot tell "not given"
+        # from "given the same value", and an explicitly empty positional read as absent.
+        # Both slipped through the version of this check that asked whether the value was
+        # truthy - the same shape as the two before it.
+        typed_v = any(a == "-V" or a.startswith("-V") or a == "--version"
+                      or a.startswith("--version=") for a in sys.argv[1:])
+        unused = [name for name, v in (("source", args.source is not None),
+                                       ("-o", args.output is not None),
+                                       ("--base", args.base is not None),
+                                       ("--size", args.size is not None),
+                                       ("--expanded", args.expanded), ("--16k", args.k16),
+                                       ("--dump", args.dump),
+                                       ("-V", typed_v)) if v]
+        if unused:
+            ap.error(f"{flag} reads a ROM and prints; it does not convert anything, so "
+                     f"{', '.join(unused)} would be ignored")
+
+    if args.tokens is not None:
         sys.exit(0 if show_tokens(args.tokens) else 1)
-    if args.selftest:
+    if args.selftest is not None:
         sys.exit(0 if selftest(args.selftest) else 1)
     if not args.source or not args.output:
         ap.error("source and -o are required unless --selftest is used")

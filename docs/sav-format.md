@@ -51,8 +51,17 @@ as empty and `LIST` shows nothing.
 ```
 line = [length 1B (including itself)][line number 2B LE][body...][00]
 body = token ($80 and up) / raw ASCII / number / string (quotes kept raw)
-after the last line: four 00 bytes, then 0x20 to the end of the area
+after the last line: 00, and the end pointer addresses the byte after it
 ```
+
+**Past the end pointer, nothing is defined.** A `.sav` is a fixed-size RAM image, so
+there is usually room left after the program - BASIC does not read it, because the end
+pointer is what says where the program stops. Usually, not always: a program can fill the
+area exactly, and then there is nothing after the terminator at all. Neither case is
+special. A `.sav` written by hardware was seen with `0x20`
+there; `fb-basic-to-sav.py` writes zeros for a fresh one and leaves whatever was there
+with `--base`. This page used to specify the `0x20` fill as part of the format, which no
+tool here produces and nothing requires.
 
 ### Numbers have three forms, plus one
 
@@ -79,12 +88,21 @@ tokens. `,` `(` `)` stay as raw ASCII.
 
 ### The token table differs by version
 
-**V3 has 109 words** (`$CCAB-$CEBD`); the V2 series has 87 (`$C120-$C2BF`).
-The 22 words V3 adds: `TR` `FIND` `GAME` `BGTOOL` `AUTO` `DELETE` `RENUM` `FILTER`
-`CLICK` `SCREEN` `BACKUP` `ERROR` `RESUME` `BGPUT` `BGGET` `CAN` `SCR$` `INSTR` `CRASH`
+**V3 has 109 words** (`$CCAB-$CEBE`); the V2 series has 88 (`$C128-$C2C5`).
+Both ranges include the `$FF` that ends the table, and both were measured from the ROMs.
+This page had `$C120-$C2BF` and `$CCAB-$CEBD`, which disagreed with what the tool says
+about the same table - a good reason to take the addresses from a ROM rather than from a
+page, which is what `fb-basic-to-sav.py` does.
+The 21 words V3 adds: `TR` `FIND` `GAME` `BGTOOL` `AUTO` `DELETE` `RENUM` `FILTER`
+`CLICK` `SCREEN` `BACKUP` `ERROR` `RESUME` `BGPUT` `BGGET` `CAN` `INSTR` `CRASH`
 `ERR` `ERL` `VCT`.
 
-⚠️ **Using the 87-word table on V3 turns every added word into individual ASCII
+This page used to say 87 and 22, with `SCR$` among the additions. **V2.1A has `SCR$`,
+at `$E1` - the same number V3 gives it** (counted from both ROMs). That
+is the same word a hand-written copy of the table dropped once before, which is the reason
+the tools read the table from the ROM instead of keeping a list.
+
+⚠️ **Using the V2 table on V3 turns every added word into individual ASCII
 characters.** The table format is a repeating "token value (bit 7 set) → the word in
 ASCII", so it can simply be re-read from the ROM.
 
