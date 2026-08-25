@@ -10,6 +10,7 @@
 | V1.0 / V2.0A / V2.1A | 約 2KB | **4KB** | PRG 2バイト ＋ ヘッダ 1バイト |
 | V3.0 | 4KB | **8KB** | PRG 5バイト ＋ ヘッダ 1バイト |
 | V3.0 | 4KB | **16KB** | MMC5 化 ＋ BASIC 本体の再配置 |
+| V2.1A / V3.0 | 2KB / 4KB | **8KB・ディスク上** | ディスクシステムのイメージとして組み直す |
 
 **MiSTer FPGA の NES コアと EverDrive N8 PRO で、16KB 版が実際に動くことを確認済みです**
 （`16374 BYTES FREE`／9,816 バイトのプログラムが `LIST`・`RUN` まで通る）。
@@ -84,6 +85,36 @@ iNES ヘッダの 10 バイト目（NVRAM サイズの宣言）1バイトです�
 
 詳しくは [docs/ram-expansion.md](docs/ram-expansion.ja.md)。
 
+## ディスク版
+
+```bash
+./tools/fb-fds.py "Family BASIC (Japan) (Rev 2).nes" --bios disksys.rom -o fcbasic.fds
+./tools/fb-fds.py "Family BASIC V3 (Japan).nes"      --bios disksys.rom -o fcbasic3.fds
+```
+
+ディスクシステムのイメージを作ります。空きは **V2.1A から 8,126 バイト**、**V3 から 8,182
+バイト**。そして `SAVE` と `LOAD` が**元からある書き方のまま**ディスクへ向きます:
+
+    SAVE "NAME"        ディスクへ          LOAD "NAME"
+    SAVE "DSK:NAME"    ディスクへ（明示）  LOAD "DSK:NAME"
+    SAVE "CAS:NAME"    カセットへ          LOAD "CAS:NAME"
+
+**ここで一番広い版ではありません** — MMC5 版は 16,374 バイトです。ディスクで得られるのは
+**媒体の側**で、CHR が RAM なので走らせながら文字の絵を書き換えられること、FDS の音源、
+カセット無しで保存できることです。**広さではなく、そちらが目的のときに選んでください。**
+
+**保存のルーチンは空きを1バイトも減らしません。** 内蔵の会話プログラムの台詞の上に置いて
+あります。ディスク版ではそこへ到達できないからで、その**論拠が `tools/fb-reach.py`** です
+——主張ではなく道具で、「この番地は走りうるか」を、分岐表を**読む命令が到達したときだけ**
+開く形で答えます。
+
+1枚のディスクにプログラムは1つです。別の名前で `SAVE` すると置き換わります。
+`tools/fb-fds-file.py` は使用済みのディスクの中身を PC から触るので、実機で打った
+プログラムをテキストとして取り出して版管理に置けます。
+
+3つの版を並べて、それぞれ何を諦めているかは
+[docs/build-differences.ja.md](docs/build-differences.ja.md) にあります。
+
 ## この作業で分かった、MMC5 の落とし穴
 
 **`$5114` に書くバンク番号の意味が、基板やコアの実装で割れます。**
@@ -129,6 +160,9 @@ MMC5 のバンク番号は **bit2 が「A15」と「RAM チップの /CE 0 と 1
 | `tools/fb-expand-basic-area.py` | 領域の上限の定数を書き換える（8KB まで。マッパーはそのまま） |
 | `tools/fb-relocate.py` | V3 の BASIC 本体 `$8000-$9FFF` を `$D000` 以降へ引っ越す |
 | `tools/fb-mmc5-16k.py` | 引っ越し済みの ROM から 16KB 版の MMC5 ROM を組む |
+| `tools/fb-fds.py` | ディスクシステムのイメージを組む。ディスクの `SAVE`/`LOAD` つき（V2.1A・V3） |
+| `tools/fb-fds-file.py` | 使用済みのディスクイメージの中のプログラムを PC から読み書きする |
+| `tools/fb-reach.py` | 「この番地はディスク版で走りうるか」に健全に答える |
 | `tools/fb-basic-to-sav.py` | テキストの BASIC → `.sav`。ROM を使った自己検定つき |
 | `tools/fb-disasm.py` | 再帰下降の逆アセンブラ。番地の参照を全数数えるために使う |
 | `tools/fb-gen-bigtest.py` | フリーエリアを埋める大きさのテストプログラムと、その答えを作る |
@@ -175,6 +209,15 @@ SHA-256 と3本のベクタ、未定義オペコードの位置まで固定し�
   V2.1A の `$8570` を `$77`→`$7F` にすると `4030 BYTES FREE` になる、という記録があり、
   ここで独立に導いた patch と一致しました
 - **[micahcowan/fbdasm](https://github.com/micahcowan/fbdasm)** — V3 の逆アセンブル
+- **『ファミコン改造マニュアル』Vol.2 / Vol.3**（三才ブックス・1988年・熊沢文幸氏の記事）
+  — ディスクへの移植を手順として世に出したもの
+- **[TakuikaNinja/FC-DiskBASIC](https://github.com/TakuikaNinja/FC-DiskBASIC)** —
+  その手順を CC65 で自動化したもの。**これを読んだことが、ディスク版をやる価値があると
+  分かった理由**です。`fb-fds.py` は移植ではなく書き直しで、先方のコードは持っていません。
+  何を意図的に使っていないかは `fb-fds.py` の中に書いてあります
+- **[NipponNoraneko/fdsbasicV3](https://github.com/NipponNoraneko/fdsbasicV3)** —
+  V3 をディスクで動かし、独自のディスク命令を持つもの。あちらのパッチ位置は、
+  ここで実測した番地と一致しました（互いの裏取りになります）
 
 ## ライセンス
 

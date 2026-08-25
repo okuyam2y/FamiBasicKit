@@ -10,6 +10,7 @@ from 4KB to **8KB**, and then to **16KB**.
 | V1.0 / V2.0A / V2.1A | ~2KB | **4KB** | 2 PRG bytes + 1 header byte |
 | V3.0 | 4KB | **8KB** | 5 PRG bytes + 1 header byte |
 | V3.0 | 4KB | **16KB** | MMC5 conversion + relocating the BASIC interpreter |
+| V2.1A / V3.0 | 2KB / 4KB | **8KB, on a disk** | rebuilt as a Famicom Disk System image |
 
 **The 16KB build is confirmed working on both the MiSTer FPGA NES core and an
 EverDrive N8 PRO** (`16374 BYTES FREE`; a 9,816-byte program `LIST`s and `RUN`s).
@@ -86,6 +87,36 @@ an option.
 
 See [docs/ram-expansion.md](docs/ram-expansion.md) (Japanese) for the full write-up.
 
+## The disk build
+
+```bash
+./tools/fb-fds.py "Family BASIC (Japan) (Rev 2).nes" --bios disksys.rom -o fcbasic.fds
+./tools/fb-fds.py "Family BASIC V3 (Japan).nes"      --bios disksys.rom -o fcbasic3.fds
+```
+
+A Famicom Disk System image with **8,126 bytes free from V2.1A** and **8,182 from V3** -
+and `SAVE` and `LOAD` that go to the disk, in the syntax that is already there:
+
+    SAVE "NAME"        to the disk            LOAD "NAME"
+    SAVE "DSK:NAME"    the disk, said aloud   LOAD "DSK:NAME"
+    SAVE "CAS:NAME"    the cassette           LOAD "CAS:NAME"
+
+**Not the roomiest build here** - the MMC5 one reaches 16,374 bytes. What the disk buys is
+the medium: CHR is RAM, so characters can be rewritten while a program runs; the FDS sound
+channel; and saving without a cassette. Choose it for those, not for space.
+
+**The save routines cost nothing.** They sit over dialogue text in the built-in
+conversation program, which cannot be reached on a disk build - `tools/fb-reach.py` is the
+argument, and it is a tool rather than a claim: it answers "can this address ever run?" by
+following the branch tables only where a reading instruction reaches them.
+
+A disk carries one program. `SAVE` under a new name replaces it. `tools/fb-fds-file.py`
+reaches inside a used disk from a PC, so a program typed on hardware can be pulled out as
+text and kept in version control.
+
+The three builds side by side, and what each gives up, are in
+[docs/build-differences.md](docs/build-differences.md).
+
 ## The MMC5 gotcha this work turned up
 
 **The meaning of a bank number written to `$5114` differs between boards and
@@ -132,6 +163,9 @@ Storage format: [docs/sav-format.md](docs/sav-format.md) (Japanese).
 | `tools/fb-expand-basic-area.py` | Rewrites the area-limit constants (up to 8KB; mapper unchanged) |
 | `tools/fb-relocate.py` | Moves V3's interpreter from `$8000-$9FFF` to `$D000` and up |
 | `tools/fb-mmc5-16k.py` | Builds the 16KB MMC5 ROM from the relocated image |
+| `tools/fb-fds.py` | Builds the Famicom Disk System image, with disk `SAVE`/`LOAD` (V2.1A and V3) |
+| `tools/fb-fds-file.py` | Reads and writes the saved program inside a used disk image, from a PC |
+| `tools/fb-reach.py` | Answers "can this address ever run on the disk build?" soundly |
 | `tools/fb-basic-to-sav.py` | Text BASIC → `.sav`, with a ROM-driven self-test |
 | `tools/fb-disasm.py` | Recursive-descent disassembler; used to enumerate every address reference |
 | `tools/fb-gen-bigtest.py` | Generates a test program large enough to fill the free area, plus its expected output |
@@ -178,6 +212,15 @@ The 16KB path takes **V3.0 only** (PRG+CHR SHA-256
   documents that patching `$8570` in V2.1A from `$77` to `$7F` yields `4030 BYTES FREE`,
   matching what was derived here
 - **[micahcowan/fbdasm](https://github.com/micahcowan/fbdasm)** — a disassembly of V3
+- **ファミコン改造マニュアル Vol.2 / Vol.3** (三才ブックス, 1988; article by 熊沢文幸) —
+  published the disk port as a manual procedure
+- **[TakuikaNinja/FC-DiskBASIC](https://github.com/TakuikaNinja/FC-DiskBASIC)** — automates
+  that procedure with the CC65 suite. Reading it is what showed the disk build was worth
+  doing. `fb-fds.py` is a rewrite rather than a port and carries none of its code; what is
+  deliberately not used is listed in that file
+- **[NipponNoraneko/fdsbasicV3](https://github.com/NipponNoraneko/fdsbasicV3)** — V3 on the
+  FDS with disk commands of its own. Its patch positions agree with the addresses measured
+  here, which is useful corroboration in both directions
 
 ## License
 
