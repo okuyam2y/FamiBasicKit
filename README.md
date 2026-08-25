@@ -22,7 +22,8 @@ reach 16KB. The same tools also rebuild the cartridge as a Famicom Disk System i
 | Disk BASIC | V2.1A or V3.0 | 8,126 / 8,182 bytes | rebuilt as an FDS image; CHR becomes RAM and the FDS sound channel is reachable |
 
 There is nothing between 8KB and 16KB: RAM is mapped in 8KB units, so 12KB is not an
-option. The disk build is not the roomiest — choose it for the medium, not for space.
+option. The disk build is not the roomiest: choose it to save to disk, to rewrite
+characters while a program runs, or to reach the FDS sound channel.
 
 ## Building one
 

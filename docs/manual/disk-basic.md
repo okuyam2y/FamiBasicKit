@@ -34,8 +34,9 @@ read the disk. It just does not select anything.
 **Saving to the disk you will be told**, because the disk's own limit is 8 characters and
 that check refuses anything longer with error `240`. `LOAD` and `CAS:` have no such check:
 the name is copied before anyone counts it, and a long one goes past the end of the buffer
-it is copied into. That does no harm — no instruction in the ROM ever looks at those bytes
-— and past about 31 characters BASIC refuses the string outright. Measured on hardware: 20
+it is copied into. As far as has been checked that does no harm: no instruction in the
+32KB names those bytes, and the only code that reaches them by index is the parser itself.
+Past about 31 characters BASIC refuses the string outright. Measured on hardware: 20
 characters write four bytes past the buffer, 26 write ten, 32 are refused, and BASIC
 carried on in every case. This is stock Family BASIC behaviour, inherited rather than
 introduced. **Keeping to 16 avoids the whole question.**
