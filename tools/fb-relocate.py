@@ -23,7 +23,7 @@ four built-in programs sit at `$D400-$FFF9`** (a music demo and three games).
 table explains the reasoning; decisions are made on the runtime output.)
 
 **Jump tables were told apart from data tables by the instructions that read them**
-(`docs/relocation-notes.md`: "a byte-pattern match is a hypothesis, not a meaning").
+(`docs/background/relocation-notes.md`: "a byte-pattern match is a hypothesis, not a meaning").
 `$8013` (sound periods), `$B37F` (palettes), `$B44A` (function-key strings) and `$C787`
 (16-bit addends) are **data** whose values merely happen to look like `$80xx-$9Fxx`, so
 they are left alone.

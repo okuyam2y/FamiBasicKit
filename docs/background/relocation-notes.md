@@ -1,5 +1,8 @@
 # Traps hit while relocating 8KB of code
 
+*Background. Why the relocation is written the way it is, and what went wrong on the way.
+Nothing here is needed to use a build or to add a keyword.*
+
 [日本語](relocation-notes.ja.md)
 
 Notes for anyone attempting the same thing. **Multi-model review turned up two real
@@ -116,9 +119,32 @@ runtime output** — `fb-relocate.py` prints the number it really fixed on every
   places**
 - **Never hand a check the answer you expect.** If you do, a wrong constant makes the
   check wrong in the same direction and it passes vacuously
-  (→ the bank-number probe in [mmc5-wram-banks.md](mmc5-wram-banks.md))
+  (→ the bank-number probe in [mmc5-wram-banks.md](../reference/mmc5-wram-banks.md))
 - **Pin the input.** `fb-relocate.py` refuses to run unless the input is a stock V3
   (PRG+CHR SHA-256, all three vectors, positions of undefined opcodes, entry points of
   code fragments)
 - **Test for "same screen as the stock ROM", not "it ran."**
   Relocation defects surface as rarely taken paths breaking silently
+
+## 6. How the result was verified
+
+"No error appeared" is not verification. Three things were used here.
+
+- **The model execution built into `fb-mmc5-16k.py`** — a minimal model of the 6502 and
+  MMC5 bank switching that **actually runs the boot probe that was assembled**
+  (`WRAM_MODELS`). It swaps the bank-number interpretation between `linear` / `chip` /
+  `only8k` and prints how each one turns out on every build.
+  The power-on values of `$5114-$5116` are **undefined**, so "unset" is treated as poison:
+  referencing `$8000-$DFFF` before setting them fails on the spot
+- **`fb-basic-to-sav.py --selftest`** — decodes the four built-in programs (387 lines,
+  8,999 bytes) and re-encodes them, demanding a **byte-exact** match.
+  The point is to **keep the ground truth out of my own understanding**
+- **Screen-by-screen comparison against the stock ROM** — relocation defects show up as
+  *rarely taken paths silently breaking*. So the test is not "it ran" but
+  "**it produces the same screen as an unmodified V3**". That is what `tests/basic/`
+  is for. Since a stock V3 only has 4KB free, anything larger is checked with
+  `fb-gen-bigtest.py` instead (a program whose answer can be computed independently)
+
+This mattered: **multi-model review turned up two real defects in a ROM already running
+on hardware.** Both produced output that looked correct, passed every static check, and
+did not reproduce during ordinary use — the two written up at the top of this file.

@@ -1,9 +1,9 @@
-# Expanding the program area — details
+# Expanding the program area — what gets rewritten
+
+*For anyone changing a build. What exactly gets rewritten, and why that is enough. To just
+use a build, read the [manual](../manual/building.md) instead.*
 
 [日本語](ram-expansion.ja.md)
-
-What exactly gets rewritten, and why that is enough. For usage, see the
-[README](../README.md).
 
 ## 1. The limit is not set by how much RAM is present
 
@@ -195,46 +195,16 @@ Block 0 maps to `$6000-$7FFF` and block 1 to `$8000-$9FFF`.
 (On the MiSTer NES core this is because `save_sz` becomes 32KB whenever
 `prg_nvram != 7`. `./tools/fb-basic-to-sav.py -V v3 --16k` picks the size for you.)
 
-## 4. What the relocation had to fix
+## 4. What the relocation had to fix, and how it was checked
 
-Moving `$8000-$9FFF` elsewhere means every value pointing into it has to be corrected.
-**Full counts, measured on the actual V3 ROM:**
-
-| Kind | Count | How they were found |
-|---|---|---|
-| Absolute `JSR`/`JMP`/data references | 860 | operands of disassembled instructions |
-| Relative branches | 479 | **left alone** (the range was extended so targets move too) |
-| Jump-table entries | 4 tables | the `LDA tbl,X / STA $19 / LDA tbl+1,X / STA $1A / JMP ($0019)` shape |
-| Addresses built from two immediates | 2 | `LDA #<lo / STA zp / LDA #>hi / STA zp+1` |
-| Reset / IRQ vectors | 2 | `$FFFC` / `$FFFE` |
-
-⚠️ **Only part of the ROM is statically reachable**, so searching for "byte pairs that
-look like `$80xx-$9Fxx`, therefore addresses" **will corrupt data**. The traps actually
-hit are collected in [relocation-notes.md](relocation-notes.md).
+Moving `$8000-$9FFF` elsewhere means every value pointing into it has to be corrected —
+860 absolute references on V3, plus jump tables, two addresses built from immediates, and
+the vectors. **Only part of the ROM is statically reachable**, so searching for "byte pairs
+that look like `$80xx-$9Fxx`, therefore addresses" **will corrupt data**.
 
 `fb-relocate.py` **refuses to run unless the input is a stock V3** (it pins the PRG+CHR
 SHA-256, all three vectors, the positions of undefined opcodes, and the entry points of
-code fragments).
+code fragments), and it prints the number of references it really fixed on every run.
 
-## 5. How it was verified
-
-"No error appeared" is not verification. Three things were used here.
-
-- **The model execution built into `fb-mmc5-16k.py`** — a minimal model of the 6502 and
-  MMC5 bank switching that **actually runs the boot probe that was assembled**
-  (`WRAM_MODELS`). It swaps the bank-number interpretation between `linear` / `chip` /
-  `only8k` and prints how each one turns out on every build.
-  The power-on values of `$5114-$5116` are **undefined**, so "unset" is treated as poison:
-  referencing `$8000-$DFFF` before setting them fails on the spot
-- **`fb-basic-to-sav.py --selftest`** — decodes the four built-in programs (387 lines,
-  8,999 bytes) and re-encodes them, demanding a **byte-exact** match.
-  The point is to **keep the ground truth out of my own understanding**
-- **Screen-by-screen comparison against the stock ROM** — relocation defects show up as
-  *rarely taken paths silently breaking*. So the test is not "it ran" but
-  "**it produces the same screen as an unmodified V3**". That is what `tests/basic/`
-  is for. Since a stock V3 only has 4KB free, anything larger is checked with
-  `fb-gen-bigtest.py` instead (a program whose answer can be computed independently)
-
-This mattered: **multi-model review turned up two real defects in a ROM already running
-on hardware.** Both produced output that looked correct, passed every static check, and
-did not reproduce during ordinary use. → [relocation-notes.md](relocation-notes.md)
+The counts, the traps that were actually hit, and the three oracles the result was checked
+against are in [relocation-notes.md](../background/relocation-notes.md).

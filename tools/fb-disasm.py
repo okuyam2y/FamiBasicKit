@@ -13,7 +13,7 @@ need both of:
   2. where, anywhere in the ROM, the 16-bit values pointing into that range live
 
 Searching by byte pattern alone mistakes data for instructions
-(see `docs/relocation-notes.md`), so **only instructions actually reachable from a vector**
+(see `docs/background/relocation-notes.md`), so **only instructions actually reachable from a vector**
 are treated as instructions.
 
 ## How it descends

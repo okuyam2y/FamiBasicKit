@@ -1,5 +1,8 @@
 # MMC5 WRAM bank numbers cannot be hard-coded
 
+*For anyone changing a build, or using more than 8KB of WRAM on MMC5 in any project.
+Getting this wrong corrupts memory silently, with no error.*
+
 [日本語](mmc5-wram-banks.ja.md)
 
 **The same bank number lands in different places depending on the board or the

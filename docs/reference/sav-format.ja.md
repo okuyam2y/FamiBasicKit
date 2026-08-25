@@ -1,4 +1,7 @@
-# BASIC プログラムの格納形式と `.sav` の作り方
+# BASIC プログラムの格納形式
+
+*版を改造する人、`.sav` を読み書きする道具を書く人のための文書です。
+プログラムを機械に入れたいだけなら[使い方](../manual/building.ja.md)を読んでください。*
 
 [English](sav-format.md)
 
@@ -116,17 +119,10 @@ ROM の内蔵プログラム4本を復号 → 再変換して**1バイトも違�
 予約語の表も ROM から読み直して突き合わせます。**正解を自分の理解に置かない**ための作りです
 （逃がした＝解釈できなかったバイトは 2.2%）。
 
-## 使い方
+## 道具の使い方はどこにあるか
 
-```bash
-./fb-basic-to-sav.py prog.bas -o out.sav                    # V2.1A（既定）
-./fb-basic-to-sav.py prog.bas -o out.sav -V v3 --expanded   # V3 の 8KB 版
-./fb-basic-to-sav.py prog.bas -o out.sav -V v3 --16k        # V3 の 16KB 版（32KB の .sav）
-```
-
-`--expanded` は領域を広げた ROM 用（最後が `$7FFF`）。`--16k` はサイズが自動で 32768 になり、
-`-V v2` との併用や `--size 8192` の明示はエラーになります。
-シグネチャと終端ポインタはツールが自動で入れます。
+`fb-basic-to-sav.py` の走らせ方と、どの版にどのフラグを付けるかは
+[使い方](../manual/building.ja.md)にあります。
 
 ## おまけ
 

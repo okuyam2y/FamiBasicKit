@@ -316,7 +316,7 @@ def read_tokens(files, disk_path):
     but then the argument could only ever repeat what the disk already says.
 
     Reading the table rather than keeping a copy is the project's rule for it
-    (`docs/token-numbering.md`), and not theoretical: a written-down copy had `SCR$`
+    (`docs/reference/token-numbering.md`), and not theoretical: a written-down copy had `SCR$`
     missing and nothing compared it to a dump.
     """
     sav = load_sav_module()

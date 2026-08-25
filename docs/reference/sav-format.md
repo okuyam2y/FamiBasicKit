@@ -1,4 +1,7 @@
-# BASIC program storage format, and how to build a `.sav`
+# BASIC program storage format
+
+*For anyone changing a build, or writing a tool that reads or writes a `.sav`. To just put
+a program on the machine, read the [manual](../manual/building.md) instead.*
 
 [日本語](sav-format.ja.md)
 
@@ -121,17 +124,10 @@ differs**. The reserved-word table is re-read from the ROM and cross-checked. Th
 goal is to **keep the ground truth out of my own understanding** (bytes it could not
 interpret, and therefore let through: 2.2%).
 
-## Usage
+## Where the tool is documented
 
-```bash
-./fb-basic-to-sav.py prog.bas -o out.sav                    # V2.1A (default)
-./fb-basic-to-sav.py prog.bas -o out.sav -V v3 --expanded   # V3, 8KB build
-./fb-basic-to-sav.py prog.bas -o out.sav -V v3 --16k        # V3, 16KB build (32KB .sav)
-```
-
-`--expanded` targets an expanded ROM (area ending at `$7FFF`). `--16k` sets the size to
-32768 automatically; combining it with `-V v2`, or passing `--size 8192` explicitly, is an
-error. The signature and end pointer are filled in for you.
+How to run `fb-basic-to-sav.py`, and which flag goes with which build, is in the
+[manual](../manual/building.md).
 
 ## Aside
 

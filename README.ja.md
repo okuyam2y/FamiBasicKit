@@ -18,6 +18,28 @@
 > ⚠️ **ROM は含まれていません。** 自分で用意したファミリーベーシックの `.nes` を
 > 道具に食わせてください。このリポジトリが配るのは Python スクリプトと解説だけです。
 
+## 文書
+
+3種類を、3つのディレクトリに分けてあります。
+
+**[docs/manual/](docs/manual/)** — 使う:
+
+- [building.ja.md](docs/manual/building.ja.md) — どれを作るか、作り方、PC からプログラムを入れる
+- [disk-basic.ja.md](docs/manual/disk-basic.ja.md) — ディスク版の `SAVE` と `LOAD`、エラー番号の意味
+
+**[docs/reference/](docs/reference/)** — 改造する。書く前に読む物で、間違えると静かに壊れます:
+
+- [build-differences.ja.md](docs/reference/build-differences.ja.md) — 版ごとに何が変わり、何は変わらないか
+- [ram-expansion.ja.md](docs/reference/ram-expansion.ja.md) — どのバイトを書き換えるか、なぜそれで足りるか
+- [sav-format.ja.md](docs/reference/sav-format.ja.md) — BASIC プログラムの格納形式
+- [token-numbering.ja.md](docs/reference/token-numbering.ja.md) — 命令を足すときのトークン番号の決まり
+- [mmc5-wram-banks.ja.md](docs/reference/mmc5-wram-banks.ja.md) — MMC5 のバンク番号を決め打ちできない理由
+
+**[docs/background/](docs/background/)** — なぜそうなっているか。上の2つには要りません:
+
+- [area-ceiling.ja.md](docs/background/area-ceiling.ja.md) — なぜ 16KB で止まるのか、次の一段の値段
+- [relocation-notes.ja.md](docs/background/relocation-notes.ja.md) — 8KB のコードを動かすときに踏んだ落とし穴
+
 ## なぜ広がるのか
 
 **BASIC が使える RAM の量は、載っている RAM の量ではなく ROM に焼かれた定数で決まります。**
@@ -73,7 +95,7 @@ iNES ヘッダの 10 バイト目（NVRAM サイズの宣言）1バイトです�
 |---|---|
 | `$6000-$7FFF` | WRAM ブロック0（フリーエリア前半） |
 | `$8000-$9FFF` | **WRAM のもう1ブロック**（後半・番号は起動時に判定する） |
-| `$A000-$BFFF` | ROM バンク5（常駐。その場で書き換えている→[詳細](docs/ram-expansion.ja.md)） |
+| `$A000-$BFFF` | ROM バンク5（常駐。その場で書き換えている→[詳細](docs/reference/ram-expansion.ja.md)） |
 | `$C000-$DFFF` | ROM バンク6（元の `$C000-$CFFF` ＋ 引っ越した本体の前半） |
 | `$E000-$FFFF` | ROM バンク7（本体の後半 ＋ 背景画 ＋ 初期化 ＋ ローダ ＋ ベクタ） |
 | バンク0-3 | 内蔵プログラム1本ずつ（下半分は `$C000-$CFFF` の複製） |
@@ -83,7 +105,7 @@ iNES ヘッダの 10 バイト目（NVRAM サイズの宣言）1バイトです�
 ⚠️ **8KB と 16KB の中間はありません。** RAM を貼れる単位が 8KB なので、12KB という選択肢は
 存在しません。
 
-詳しくは [docs/ram-expansion.md](docs/ram-expansion.ja.md)。
+詳しくは [docs/reference/ram-expansion.ja.md](docs/reference/ram-expansion.ja.md)。
 
 ## ディスク版
 
@@ -112,8 +134,9 @@ iNES ヘッダの 10 バイト目（NVRAM サイズの宣言）1バイトです�
 `tools/fb-fds-file.py` は使用済みのディスクの中身を PC から触るので、実機で打った
 プログラムをテキストとして取り出して版管理に置けます。
 
-3つの版を並べて、それぞれ何を諦めているかは
-[docs/build-differences.ja.md](docs/build-differences.ja.md) にあります。
+ディスク版で何を打つのか、エラー番号が何を意味するのかは
+[使い方](docs/manual/building.ja.md)にあります。3つの版を並べて、それぞれ何を諦めているかは
+[docs/reference/build-differences.ja.md](docs/reference/build-differences.ja.md) にあります。
 
 ## この作業で分かった、MMC5 の落とし穴
 
@@ -132,8 +155,7 @@ MMC5 のバンク番号は **bit2 が「A15」と「RAM チップの /CE 0 と 1
 読み比べて選びます。**
 
 同じ罠は MMC5 で WRAM を 8KB より多く使おうとする人なら誰でも踏みます。
-詳しくは [docs/mmc5-wram-banks.md](docs/mmc5-wram-banks.ja.md)
-（[English](docs/mmc5-wram-banks.md)）。
+詳しくは [docs/reference/mmc5-wram-banks.ja.md](docs/reference/mmc5-wram-banks.ja.md)。
 
 ## プログラムを外から入れる
 
@@ -151,7 +173,7 @@ MMC5 のバンク番号は **bit2 が「A15」と「RAM チップの /CE 0 と 1
 ./tools/fb-basic-to-sav.py --selftest "Family BASIC V3 (Japan).nes"
 ```
 
-格納形式の詳細は [docs/sav-format.md](docs/sav-format.ja.md)。
+格納形式の詳細は [docs/reference/sav-format.ja.md](docs/reference/sav-format.ja.md)。
 
 ## 道具の一覧
 

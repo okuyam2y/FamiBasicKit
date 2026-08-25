@@ -1,5 +1,8 @@
 # Token numbering: the rules for adding a BASIC keyword
 
+*For anyone adding a keyword. Read it before you write: getting this wrong changes what
+every program ever saved means, without an error.*
+
 [日本語](token-numbering.ja.md)
 
 ## Why this file exists

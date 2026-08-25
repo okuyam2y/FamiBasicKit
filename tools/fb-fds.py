@@ -528,7 +528,7 @@ def disk_routines(v, disk_id):
     # ⚠️ **The two versions lay the program out differently, and it is not a shift of one
     # base.** V2.1A puts a two-byte signature at `$603A`, the end pointer at `$603C/$603D`
     # and the body at `$603E`; V3 puts a one-byte signature at `$6001`, the end pointer at
-    # `$6002/$6003` and the body at `$6006` (`docs/sav-format.md`, and measured on the
+    # `$6002/$6003` and the body at `$6006` (`docs/reference/sav-format.md`, and measured on the
     # running V3 disk: `$05/$06` reads `$6006`). Saving V2.1A's layout on a V3 machine
     # writes from 52 bytes past the program and computes a length that underflows for a
     # short one. Found in review - and the save test did not catch
@@ -891,7 +891,7 @@ V3_PATCHES = [
 
     # V3 alone has `BGGET`/`BGPUT`, and the 1KB buffer they share is pinned to the top of
     # the program area. Widening the area without moving it leaves the buffer in the middle
-    # of the user's program, where `BGGET` errors out instead (`docs/ram-expansion.md`).
+    # of the user's program, where `BGGET` errors out instead (`docs/reference/ram-expansion.md`).
     # Three immediates, each pinned by the instruction around it.
     ("BGGET headroom", 0xB1BD, b"\xC9\x6C\xB0", b"\xC9\x7C\xB0"),
     ("BGGET buffer", 0xB1CA, b"\xA9\x6C\x85\x1A", b"\xA9\x7C\x85\x1A"),
@@ -927,7 +927,7 @@ VARIANTS = {
         irq_stub_at=IRQ_STUB_AT, vectors=VECTORS, reset_vector=0xC400,
         save_at=SAVE_AT, arg_flag=0xB5, bytes_free=8126,
         # What gets written to the disk, and what BASIC's power-on path reads back.
-        # `docs/sav-format.md`: two-byte signature, then the end pointer, then the body.
+        # `docs/reference/sav-format.md`: two-byte signature, then the end pointer, then the body.
         sav_version="v2",           # what `fb-basic-to-sav.py -V` calls it
         save_from=0x603A, end_ptr_at=0x603C,
         signature=((0x603A, 0x5A), (0x603B, 0x33)),

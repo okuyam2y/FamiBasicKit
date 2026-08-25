@@ -18,6 +18,30 @@ EverDrive N8 PRO** (`16374 BYTES FREE`; a 9,816-byte program `LIST`s and `RUN`s)
 > ⚠️ **No ROM data is included.** Supply your own Family BASIC `.nes` image.
 > This repository ships Python scripts and documentation only.
 
+## Documentation
+
+Three kinds, in three directories, kept apart on purpose.
+
+**[docs/manual/](docs/manual/)** — to use a build:
+
+- [building.md](docs/manual/building.md) — which one to make, how to make it, getting a program in from a PC
+- [disk-basic.md](docs/manual/disk-basic.md) — `SAVE` and `LOAD` on a disk build, and what the error numbers mean
+
+**[docs/reference/](docs/reference/)** — to change one; read before you write, because getting
+these wrong breaks quietly:
+
+- [build-differences.md](docs/reference/build-differences.md) — what each build changes, and what it does not
+- [ram-expansion.md](docs/reference/ram-expansion.md) — which bytes get rewritten, and why that is enough
+- [sav-format.md](docs/reference/sav-format.md) — how a BASIC program is stored
+- [token-numbering.md](docs/reference/token-numbering.md) — the rules for adding a keyword
+- [mmc5-wram-banks.md](docs/reference/mmc5-wram-banks.md) — why an MMC5 bank number cannot be hard-coded
+
+**[docs/background/](docs/background/)** — why things are the way they are; needed for neither
+of the above:
+
+- [area-ceiling.md](docs/background/area-ceiling.md) — why this stops at 16KB, and what the next step would cost
+- [relocation-notes.md](docs/background/relocation-notes.md) — the traps hit while relocating 8KB of code
+
 ## Why it expands at all
 
 **The amount of RAM BASIC uses is set by a constant burned into the ROM, not by how
@@ -74,7 +98,7 @@ The result is an MMC5 (mapper 5) ROM: PRG 64KB / CHR 8KB / NVRAM 16KB.
 |---|---|
 | `$6000-$7FFF` | WRAM block 0 — lower half of the free area |
 | `$8000-$9FFF` | **A second WRAM block** — upper half (bank number probed at boot) |
-| `$A000-$BFFF` | ROM bank 5 (always resident; patched in place — see [details](docs/ram-expansion.md)) |
+| `$A000-$BFFF` | ROM bank 5 (always resident; patched in place — see [details](docs/reference/ram-expansion.md)) |
 | `$C000-$DFFF` | ROM bank 6 (original `$C000-$CFFF` + first half of the relocated interpreter) |
 | `$E000-$FFFF` | ROM bank 7 (second half + title graphic + init + loader + vectors) |
 | Banks 0-3 | One built-in program each (lower half duplicates `$C000-$CFFF`) |
@@ -85,7 +109,7 @@ background graphic — verified on hardware.
 ⚠️ **There is nothing between 8KB and 16KB.** RAM is mapped in 8KB units, so 12KB is not
 an option.
 
-See [docs/ram-expansion.md](docs/ram-expansion.md) (Japanese) for the full write-up.
+See [docs/reference/ram-expansion.md](docs/reference/ram-expansion.md) for the full write-up.
 
 ## The disk build
 
@@ -114,8 +138,9 @@ A disk carries one program. `SAVE` under a new name replaces it. `tools/fb-fds-f
 reaches inside a used disk from a PC, so a program typed on hardware can be pulled out as
 text and kept in version control.
 
-The three builds side by side, and what each gives up, are in
-[docs/build-differences.md](docs/build-differences.md).
+What to type on a disk build, and what the error numbers mean, are in the
+[manual](docs/manual/building.md). The three builds side by side, and what each gives up, are in
+[docs/reference/build-differences.md](docs/reference/build-differences.md).
 
 ## The MMC5 gotcha this work turned up
 
@@ -136,7 +161,7 @@ stops guessing and probes at boot**: it writes through `$01`, reads back a marke
 `$6000-$7FFF`, and falls back to `$04` if the marker was clobbered (i.e. it was a mirror).
 
 Anyone trying to use more than 8KB of WRAM on MMC5 will hit the same thing.
-Details: [docs/mmc5-wram-banks.en.md](docs/mmc5-wram-banks.md).
+Details: [docs/reference/mmc5-wram-banks.md](docs/reference/mmc5-wram-banks.md).
 
 ## Getting programs in from a PC
 
@@ -154,7 +179,7 @@ built-in programs (387 lines, 8,999 bytes) and re-encodes them, demanding a byte
 ./tools/fb-basic-to-sav.py --selftest "Family BASIC V3 (Japan).nes"
 ```
 
-Storage format: [docs/sav-format.md](docs/sav-format.md) (Japanese).
+Storage format: [docs/reference/sav-format.md](docs/reference/sav-format.md).
 
 ## The tools
 
