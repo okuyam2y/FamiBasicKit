@@ -24,6 +24,39 @@ expanded build, `RUN` it, and **compare the screens**.
 > one specific MiSTer machine's connection settings. The same comparison works under an
 > emulator.
 
+## Checking the converter itself
+
+`tests/basic/` compares two builds against each other. `tests/hw/encoder.bas` asks a
+different question: did `fb-basic-to-sav.py` encode the program the way the machine reads
+it? Three lines, each one a case where a plausible converter gets it wrong and nothing says
+so until the program runs.
+
+```bash
+./tools/fb-basic-to-sav.py tests/hw/encoder.bas -o encoder.sav -V v3
+```
+
+Load it, `RUN`, and compare what is printed with `tests/hw/encoder.expect`:
+
+```
+D 11 22
+QGOTO
+L 31
+```
+
+| Line | What it catches |
+|---|---|
+| `A=34:DATA 11,22` | 34 encodes as `$12 22 00`, and that `$22` operand looks like a quote. A converter that reads quote state without stepping over a number's operand bytes takes `DATA` for text inside a string and tokenises its fields; `READ` then fails with `?TM ERROR`. `D 11 22` means they stayed raw. ⚠️ **Both statements have to be on one line** - the encoder starts each line with no state, so splitting them hides the defect. |
+| `PRINT \x22GOTO\x22` | A quote byte opens a string however it was written, and past one the machine copies bytes rather than tokenising them. A converter that only treats a written `"` as an opener stores `GOTO` as the single token `$80`. `QGOTO` means the four characters survived. |
+| `LEN(\x22<31 characters>\x22)` | The length limit is counted in **encoded bytes**, and `\xNN` is four characters on the page and one byte in memory. `L 31` means the length the machine sees is the length that was meant. |
+
+> `\xNN` is how `fb-basic-to-sav.py` writes a byte with no character of its own - see its
+> `--help`. It is not BASIC syntax and the machine never sees the backslash.
+
+⚠️ **Every line here exists because a converter passed the obvious cases and failed this
+one.** If you change how strings or numbers are encoded, run this before believing the
+change. An emulator answers it as well as hardware does - what is being checked is the
+bytes, not the timing.
+
 ## What is here
 
 | File | What it exercises |
