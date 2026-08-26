@@ -67,6 +67,7 @@ characters and breaks the program silently.
 
 import argparse
 import re
+import os
 import sys
 
 WRAM_BASE = 0x6000           # the CPU address that offset 0 of a .sav corresponds to
@@ -197,33 +198,208 @@ def encode_number(value, kind=0x12):
     return bytes([kind, value & 0xFF, (value >> 8) & 0xFF])
 
 
-def encode_body(text, tokens, small_digits=True):
+NUMBER_TOKENS = (0x0B, 0x11, 0x12)      # each is followed by two operand bytes
+
+
+def scan_literals(body):
+    """Walk an encoded line body once.
+
+    Returns `([(length, closed), ...], ends inside a string, operand bytes still owed)`.
+    One walk answers all three because they are the same walk asked three times, and
+    separate walks of the same rule are how they came to disagree.
+
+    Each literal carries whether it was **closed**, because the certainty of the length
+    rule differs between the two: a closed literal past the limit is measured, an
+    unterminated one is not. A single "did the line end inside a string" cannot say which
+    of several literals the over-long one was (found in review).
+
+    ★ **One walk, answering both questions.** They were two functions with the same rule
+    written twice, and the copies disagreed within a round: `literals_in` stepped over the
+    two operand bytes after `$0B`, `$11` and `$12` while `inside_string` counted every
+    `$22` in the line. So `A=34:DATA 11,22` - where 34 encodes as `12 22 00` - looked like
+    an open string, `DATA` was taken for text instead of a word, and its fields were
+    tokenised. This file says a few lines below what that costs: `READ` then fails with
+    `?TM ERROR` on the machine. **A valid program, silently miscompiled** (found in review,
+    by both reviewers independently, one with `GOTO 34: REM comment`).
+
+    ⚠️ The operand skip only applies **outside** a string. Inside one, `$12` is a character.
+
+    ⚠️ An unterminated literal is measured to the end of the line, which is where it runs
+    to on the machine. Whether the 31-byte limit applies to it has not been measured -
+    what was measured is a closed one - so counting it is the conservative reading, and
+    `--allow-long-strings` is the way past it.
+    """
+    lengths, i, inside, start, pending = [], 0, False, 0, 0
+    while i < len(body):
+        if not inside and body[i] in NUMBER_TOKENS:
+            if i + 3 > len(body):
+                # The stream stops part-way through a number's two operand bytes. Those
+                # bytes mean nothing on their own - `$91` after `$12` is half of a number,
+                # not `DATA` - so a caller adding the next byte must not read it as syntax
+                # (found in review).
+                pending = i + 3 - len(body)
+                break
+            i += 3
+            continue
+        if body[i] == 0x22:
+            if inside:
+                lengths.append((i - start - 1, True))
+                inside = False
+            else:
+                inside, start = True, i
+        i += 1
+    if inside:
+        lengths.append((len(body) - start - 1, False))
+    return lengths, inside, pending
+
+
+def encode_body(text, tokens, small_digits=True, literals=None, state=None):
     """Encode a line body into a token stream.
 
     WARNING: **numbers have three storage forms** (see the notes near `SMALL_MAX`).
     A version that wrote everything as `$12 lo hi` made any program containing
     `GOTO`/`GOSUB` fail with `?SN ERROR` (found on hardware). Line numbers must be
     `$0B lo hi`.
+
+    Pass a list as `literals` to be told how long each **string literal** was, in encoded
+    bytes. Only this function knows which quotes are literals: everything after `REM`,
+    `DATA` or `'` is stored raw, quotes and all, so counting quote bytes in the finished
+    line cannot tell a literal from a comment (found in review).
     """
     out = bytearray()
+    by_token = {tok: word for word, tok in tokens}
     i = 0
     in_name = False          # are we mid-identifier? (keeps `X0` from becoming X plus 0)
     expect_ref = False       # is the next number a line number? (survives spaces and `,`)
+
+    def finish():
+        """Report the string literals, measured on the bytes that will run.
+
+        Not on the source spans. Two things defeat that: `\\x22` emits a real quote, so one
+        written span can be two literals in memory (and was refused as one long one), and a
+        literal written **entirely** in escapes never opens a source span at all, so it was
+        not measured and slipped past the check completely (both found in review).
+
+        So the quote bytes in the finished line are what is counted, up to wherever a
+        `REM`, a `DATA` or an apostrophe turned the rest of the line into text nobody
+        executes."""
+        found, ends_inside, _owed = scan_literals(bytes(out[:raw_from[0]]))
+        if literals is not None:
+            literals.extend(found)
+        if state is not None:
+            # ⚠️ Handed back rather than recomputed. A caller that rescans the finished
+            # line does not know where the `REM`/`DATA` tail began, so an unmatched quote
+            # in a comment looked like an open string (found in review).
+            state["ends_inside"] = ends_inside
+        return bytes(out)
+
+    raw_from = [None]        # where an unexecuted tail begins, if the line has one
+
+    def inside_string():
+        """Is the stream emitted so far inside an open string literal?
+
+        ⚠️ **Quote state belongs to the bytes, not to the source.** `REM` and `DATA` end
+        the executable part of a line - but only when they are words, and inside a string
+        they are text. Writing the opening quote as `\\x22` put the encoder in a string
+        that the *source* scanner could not see, so `PRINT \\x22REM ` followed by forty
+        bytes and a closing `\\x22` cut the executable part at the `REM` and measured one
+        byte instead of a 42-byte literal - a program the machine stops on, converted
+        without complaint (found in review).
+
+        The walk itself is `scan_literals`, shared with the length check, because the two
+        used to be separate and disagreed.
+        """
+        return scan_literals(bytes(out))[1]
+
+    def owes_operand():
+        """Is the stream part-way through a number token's two operand bytes?"""
+        return scan_literals(bytes(out))[2] > 0
     while i < len(text):
         ch = text[i]
 
-        if text.startswith("\\x", i) and len(text) >= i + 4:   # escape for a raw byte
-            out.append(int(text[i + 2:i + 4], 16))
+        if text.startswith("\\x", i) and len(text) >= i + 4:
+            # ★ **An escaped byte goes through the same state machine as everything else.**
+            # It is a way of spelling a byte, and a byte can *be* a reserved word: `\\x80`
+            # is `GOTO`, `\\x91` is `DATA`. So it arms the line-number expectation, or
+            # starts a raw tail, exactly as the written word would.
+            #
+            # ⚠️ Three rounds were spent adding one byte value at a time here - first the
+            # quote, then the backslash - and each time the next round found another. The
+            # rule is not a list of bytes; it is "do what this byte means" (found in
+            # review, which supplied `\\x80 100` storing a `$12` where GOTO needs `$0B`,
+            # `\\x91 11,22` tokenising DATA's fields into `?TM ERROR`, and `\\xC1` before a
+            # number breaking the round trip because `chr(0xC1).isalpha()` is true in
+            # Python and has nothing to do with this machine).
+            was_inside, was_operand = inside_string(), owes_operand()
+            byte = int(text[i + 2:i + 4], 16)
+            out.append(byte)
             i += 4
-            in_name = False
+            if was_inside or was_operand:
+                # Inside a string every byte is content; inside a number's operands every
+                # byte is half of a number. Neither is syntax, so neither changes the
+                # state - `\\x12\\x91\\x00` is the number 145, not a number and then `DATA`
+                # (found in review).
+                continue
+            if in_name and 0x30 <= byte <= 0x39:
+                # A digit inside an identifier stays part of the name, exactly as the
+                # written path leaves `X0` alone. Losing that made `A\\x311=2` encode the
+                # second `1` as a number (found in review).
+                continue
+            if byte == 0x27:
+                # The apostrophe is stored as itself, not as a token, and the machine reads
+                # it as "comment to end of line" wherever it finds it. Writing it started a
+                # raw tail and spelling it did not, so `\\x27 100` tokenised a number into
+                # what the machine treats as comment text (found in review).
+                raw_from[0] = len(out)
+                out += encode_raw(text[i:])
+                return finish()
+            word = by_token.get(byte)
+            if word is not None:
+                in_name = False
+                expect_ref = word in LINE_REF_AFTER
+                if word in RAW_AFTER:
+                    raw_from[0] = len(out)
+                    out += encode_raw(text[i:])
+                    return finish()
+            else:
+                # ⚠️ ASCII, not Unicode. `chr(0xC1)` is a letter to Python and a byte with
+                # no meaning to this BASIC.
+                in_name = byte < 0x80 and chr(byte).isalpha()
+                if byte not in (0x20, 0x2C):   # a space and a comma keep a line-number list
+                    expect_ref = False
             continue
 
-        if ch == '"':                                  # strings are kept raw
-            j = text.find('"', i + 1)
-            if j < 0:
-                raise ValueError(f'unterminated quote: {text}')
-            out += encode_raw(text[i:j + 1])
-            i = j + 1
+        if inside_string():
+            # ★ **A quote byte opens a string on the machine, however it was written.**
+            # Past one, everything up to the next quote byte is content: the interpreter
+            # copies it, it does not tokenise it. This did tokenise it, so
+            # `PRINT \\x22GOTO\\x22` came out as the single token `$80` between quotes -
+            # a different program from the one written, produced without a word, and
+            # measured as a one-byte literal so the length check waved it through
+            # (found in review).
+            #
+            # Case is kept for the same reason: inside a string the machine stores what it
+            # was given. The `"` path has always copied raw; this makes the escaped
+            # opener behave the same way, which is the point - one rule for one thing.
+            out += text[i].encode("ascii")
+            i += 1
+            in_name = expect_ref = False
+            continue
+
+        if ch == '"':
+            # ★ **One operation: emit a quote byte.** Opening and closing are the same
+            # thing, because on the machine they are the same byte - and the branch above
+            # copies whatever follows while the stream is inside a string, so a literal
+            # `"` and a `\\x22` are now interchangeable in both directions.
+            #
+            # ⚠️ This used to take the whole span up to the next `"` **in the source**,
+            # which is a different notion of "string" from the one the machine has. So
+            # `PRINT"A\\x22` was refused although its bytes are a closed string, and
+            # `PRINT"A\\x22:GOTO 100:PRINT\\x22B"` left `GOTO` as characters instead of a
+            # token (found in review - the third round in a row where this file decided
+            # something about strings in the source's terms rather than the bytes').
+            out.append(0x22)
+            i += 1
             in_name = expect_ref = False
             continue
 
@@ -265,21 +441,27 @@ def encode_body(text, tokens, small_digits=True):
                 # Nothing after `REM` or `DATA` is tokenised. Encoding `DATA 11,22`
                 # with numeric tokens makes `READ` fail with `?TM ERROR`
                 # (measured on hardware)
+                # No `inside_string()` here: the branch at the top of the loop already
+                # took every character while the stream is inside one, so this line is
+                # only reached outside. Guarding again read as if the state could be true
+                # here, which is a check that cannot fail (found in review).
                 if word in RAW_AFTER:
+                    raw_from[0] = len(out)
                     out += encode_raw(text[i:])
-                    return bytes(out)
+                    return finish()
                 break
         else:
             if ch == "'":                              # shorthand for REM; raw from here on
+                raw_from[0] = len(out)
                 out += encode_raw(text[i:])
-                return bytes(out)
+                return finish()
             out += ch.upper().encode("ascii")          # spaces, punctuation, identifiers
             in_name = ch.isalpha()
             if ch not in " ,":                         # spaces and `,` continue a line-number list
                 expect_ref = False
             i += 1
 
-    return bytes(out)
+    return finish()
 
 
 def encode_raw(text):
@@ -353,7 +535,7 @@ def decode_body(data, tokens, small_digits=True):
             out.append('"' + "".join(raw(x) for x in data[i + 1:j]) + '"')
             i = j + 1
             continue
-        if b in (0x0B, 0x11, 0x12):
+        if b in NUMBER_TOKENS:
             # A two-byte number needs two bytes after the token. A line that ends in the
             # middle of one is a corrupt line, not an IndexError.
             if i + 2 >= len(data):
@@ -382,8 +564,60 @@ def decode_body(data, tokens, small_digits=True):
     return keep_tail("".join(out)), escaped
 
 
-def encode_line(number, body_text, tokens, small_digits):
-    body = encode_body(body_text, tokens, small_digits)
+# Measured on real hardware, 2026-08-25: a 31-byte string literal prints and a 32-byte one
+# raises `?IL ERROR` when the line runs. The pair that showed it differ by one leading
+# character and nothing else, and the shorter line as a whole is 42 characters, so the
+# ceiling is on the literal rather than on the line:
+#
+#     PRINT"LAYING - STOP WITH POKE 31728,0"     31   prints
+#     PRINT"PLAYING - STOP WITH POKE 31728,0"    32   ?IL ERROR
+#
+# Nintendo's own built-in programs agree as far as they go: across the 387 lines the
+# selftest decodes there are 104 literals and the longest is 28 bytes. That is consistent
+# with the limit, not a proof of it - nobody wrote a 31 to find out.
+#
+# ⚠️ Why it reports as `IL` is not established. The error table at `$B37F` reads
+# `NF SN RG OD IL OV OM UL SO DD`, so `SO` - string overflow - exists and is a different
+# code that this does not raise. The number is measured; the reason is not.
+MAX_STRING = 31
+
+
+def encode_line(number, body_text, tokens, small_digits, allow_long_strings=False):
+    # The lengths come from `encode_body`, which is the only place that knows a quote is
+    # opening a string rather than sitting inside a `REM` or a `DATA` tail. A first version
+    # counted quote bytes in the finished line instead and refused
+    # `10 REM "<32 characters>"` - a line the machine never looks at, because `REM` is not
+    # executed (found in review).
+    #
+    # ⚠️ **Strings inside `DATA` are therefore not checked.** They are stored raw, and what
+    # was measured was a literal in a statement that runs. Whether `READ` into a string
+    # variable has the same ceiling has not been measured, and guessing it here would put
+    # an unmeasured number in the same sentence as a measured one.
+    literals = []
+    body = encode_body(body_text, tokens, small_digits, literals)
+    # Before the line-length check below, because a line can be legal by that one and still
+    # hold a literal the machine will not print. It converted silently until 2026-08-25 and
+    # the program then failed on the machine, at that line, with nothing on the PC saying so.
+    # ★ The offending literal's **own** closure, not the line's. A closed 32-byte literal
+    # followed by a short unterminated one was being reported as the unmeasured case
+    # (found in review).
+    offending = next(((n, c) for n, c in literals if n > MAX_STRING), None)
+    over, closed = offending if offending else (None, True)
+    if over is not None and not allow_long_strings:
+        # ⚠️ The measurement is about the line **running**, and this refuses at conversion
+        # - so a literal on a line the program never reaches is refused although it would
+        # have run (found in review, with `10 GOTO 30 / 20 PRINT"<32>" / 30 PRINT"OK"`).
+        # Deciding which lines run is not something a converter can do, so the choice is
+        # between refusing a rare working program and letting through the common broken
+        # one. It refuses, and says how to override - the message is the escape hatch.
+        measured = ("the machine raises ?IL ERROR past "
+                    f"{MAX_STRING} (measured)" if closed else
+                    f"a closed literal past {MAX_STRING} raises ?IL ERROR (measured); "
+                    f"whether an unterminated one does has **not** been measured, so this "
+                    f"refusal is the conservative reading")
+        raise ValueError(f"line {number} holds a string literal of {over} bytes; "
+                         f"{measured}. If that line never runs, or you know better, "
+                         f"pass --allow-long-strings.")
     line = bytes([number & 0xFF, number >> 8]) + body + b"\x00"
     # The line length is one leading byte, so 255 is the maximum. Past that, bytes()
     # raises an opaque "bytes must be in range(0, 256)"
@@ -392,12 +626,28 @@ def encode_line(number, body_text, tokens, small_digits):
     return bytes([len(line) + 1]) + line
 
 
-def build_program(source, tokens, small_digits):
+def build_program(source, tokens, small_digits, allow_long_strings=False):
     out = bytearray()
     lineno_seen = set()
     prev = -1
     for raw in source.splitlines():
-        raw = raw.rstrip()
+        # ⚠️ Trailing spaces are stripped **unless the line ends inside a string**, where
+        # they are content: `10 PRINT"X   ` holds three spaces on the machine, and
+        # dropping them made the program differ from its source without saying so (found
+        # in review). The state comes from encoding the line once - the same walk that
+        # decides everything else about strings, rather than a second opinion.
+        stripped = raw.rstrip()
+        if stripped != raw:
+            m0 = re.match(r"\s*(\d+)\s?(.*)$", raw)
+            if m0:
+                try:
+                    st = {}
+                    encode_body(m0.group(2), tokens, small_digits, state=st)
+                    if st.get("ends_inside"):
+                        stripped = raw
+                except ValueError:
+                    pass                      # the line is refused below, with its reason
+        raw = stripped
         if not raw or raw.lstrip().startswith("'"):
             continue
         m = re.match(r"\s*(\d+)\s?(.*)$", raw)
@@ -413,7 +663,8 @@ def build_program(source, tokens, small_digits):
             raise ValueError(f"line numbers not ascending: {number} follows {prev}")
         prev = number
         lineno_seen.add(number)
-        out += encode_line(number, m.group(2), tokens, small_digits)
+        out += encode_line(number, m.group(2), tokens, small_digits,
+                           allow_long_strings)
     out += b"\x00"                                     # end of program
     return bytes(out)
 
@@ -421,6 +672,9 @@ def build_program(source, tokens, small_digits):
 # Where the four built-in programs start in a stock V3 (32KB PRG). Same values as in
 # `fb-mmc5-16k.py`
 BUILTIN_PROGRAMS = (0xD400, 0xDBFE, 0xE682, 0xF308)
+# How many lines each of them has, measured off the V3 dump once. The walk stops at a zero
+# length byte, so damaging the first one silently skipped a whole program - see `selftest`.
+BUILTIN_LINES = {0xD400: 56, 0xDBFE: 111, 0xE682: 103, 0xF308: 117}
 
 
 def read_token_table(prg):
@@ -486,7 +740,13 @@ def show_tokens(rom_path):
         sys.exit(f"{rom_path}: an iNES header is 16 bytes, this file is {len(raw)}")
     prg = raw[16:16 + raw[4] * 16384]
     m = re.search(rb"NS-HUBASIC V\d\.\d[A-Z]?", prg)
-    used = dict((t, w) for w, t in read_token_table(prg))
+    try:
+        used = dict((t, w) for w, t in read_token_table(prg))
+    except ValueError as e:
+        # A 32KB file with an iNES header is not necessarily a Family BASIC dump, and
+        # `read_token_table` says so by raising. `_run` only turns filesystem faults into
+        # sentences, so this one arrived as a traceback (found in review).
+        sys.exit(f"{rom_path}: {e}")
 
     print(f"## {rom_path}")
     print(f"  {m.group(0).decode() if m else '(no version string)'} / "
@@ -529,8 +789,20 @@ def selftest(rom_path):
     if len(raw) < 16 or raw[:4] != b"NES\x1a" or raw[4] != 2:
         sys.exit(f"{rom_path}: not a Family BASIC dump (iNES with a 32KB PRG)")
     prg = raw[16:16 + 0x8000]
+    # ⚠️ The header *says* 32KB; this checks that the file actually carries it. A truncated
+    # dump can still hold the version string and a complete word table, so it walked into
+    # the built-in programs and indexed off the end - an `IndexError` traceback where a
+    # sentence was required (found in review).
+    if len(prg) != 0x8000:
+        sys.exit(f"{rom_path}: the header declares a 32KB PRG but the file carries "
+                 f"{len(prg)} bytes of it; this dump is truncated")
 
     def cpu(a):
+        if not 0x8000 <= a < 0x10000:
+            # A line record inside a built-in program that claims a length running past
+            # the ROM. Refusing names the address; indexing raised a bare IndexError.
+            sys.exit(f"{rom_path}: a built-in program reaches ${a:04X}, outside the PRG. "
+                     f"This dump is damaged, or it is not the ROM it says it is.")
         return prg[a - 0x8000]
 
     m = re.search(rb"NS-HUBASIC V(\d)\.\d[A-Z]?", prg)
@@ -542,7 +814,10 @@ def selftest(rom_path):
     # Re-read the reserved-word table from the ROM and cross-check it against the built-in
     # list. **A skewed list would round-trip unnoticed**, so pin it here. This ran against
     # V3 only until 2026-08-24, which is how `SCR$` stayed missing from the V2 list.
-    from_rom = read_token_table(prg)
+    try:
+        from_rom = read_token_table(prg)
+    except ValueError as e:
+        sys.exit(f"{rom_path}: {e}")
     table = TOKENS_V3 if version == "v3" else TOKENS_V2
     if sorted(from_rom) != sorted(table):
         only_rom = sorted(set(from_rom) - set(table))
@@ -558,6 +833,15 @@ def selftest(rom_path):
     tokens = TOKENS_BY_VERSION["v3"]
     ok = True
     total_lines = total_bytes = total_escaped = 0
+    # ⚠️ **How many lines each program has, pinned here.** A zero in a line-length byte
+    # ends the walk, so damaging the *first* one skipped a whole program while `ok` stayed
+    # true and the run still reported "every line round-tripped byte for byte" - the oracle
+    # accepting a damaged ROM while saying it had checked it (found in review).
+    #
+    # These counts were read off this dump once and are the independent side of the check:
+    # the walk finds them, and disagreeing means the dump is not the one this was measured
+    # against. ★ They are per program on purpose - a total would let one program lose lines
+    # while another gained them.
     for start in BUILTIN_PROGRAMS:
         a = start
         lines = bad = 0
@@ -566,9 +850,32 @@ def selftest(rom_path):
             if ln == 0:
                 break
             number = cpu(a + 1) | (cpu(a + 2) << 8)
+            # ⚠️ The shape of the line, before its contents. A length under 4 cannot hold
+            # the header and a terminator, and the last byte has to be the `$00` that ends
+            # the line - this discarded it unchecked, so a ROM with a damaged terminator
+            # still reported "every line round-tripped byte for byte". **The oracle was
+            # accepting a damaged ROM while saying it had verified it** (found in review).
+            if ln < 4 or cpu(a + ln - 1) != 0:
+                sys.exit(f"{rom_path}: the built-in program at ${start:04X}, line {number}, "
+                         f"claims {ln} bytes and ends with "
+                         f"${cpu(a + ln - 1) if ln >= 4 else 0:02X}, not $00. This dump is "
+                         f"damaged, so it cannot be used as ground truth.")
             body = bytes(cpu(x) for x in range(a + 3, a + ln - 1))
-            text, escaped = decode_body(body, tokens)
-            again = encode_body(text, tokens)
+            try:
+                text, escaped = decode_body(body, tokens)
+            except ValueError as e:
+                # A damaged built-in line - one ending in `$12` with no operand, say -
+                # reached the user as a traceback. Naming where it is matters: the caller
+                # is looking at a ROM, not at a program they wrote (found in review).
+                sys.exit(f"{rom_path}: the built-in program at ${start:04X}, line "
+                         f"{number}, will not decode: {e}")
+            try:
+                again = encode_body(text, tokens)
+            except ValueError as e:
+                # Decoding can succeed on bytes that will not go back - `&H` with no digits
+                # after it, say. Same context as the decode failure above (found in review).
+                sys.exit(f"{rom_path}: the built-in program at ${start:04X}, line "
+                         f"{number}, decodes but will not re-encode: {e}")
             total_lines += 1
             total_bytes += len(body)
             total_escaped += escaped
@@ -582,6 +889,17 @@ def selftest(rom_path):
                     print(f"       re-encoded {again.hex(' ')}")
                     print(f"       as text    {text!r}")
             a += ln
+        # ⚠️ Indexed, not `.get()`. A missing entry skipped the check in silence, which is
+        # the same hole this check exists to close (found in review).
+        if start not in BUILTIN_LINES:
+            sys.exit(f"BUILTIN_LINES has no count for ${start:04X}, so that program would "
+                     f"not be checked at all - the two tables in this file have drifted.")
+        want_lines = BUILTIN_LINES[start]
+        if lines != want_lines:
+            sys.exit(f"{rom_path}: the built-in program at ${start:04X} has {lines} lines, "
+                     f"not the {want_lines} this was measured against. A zero length byte "
+                     f"ends the walk, so a damaged one shortens the program silently - "
+                     f"this dump cannot be used as ground truth.")
         print(f"  ${start:04X}: {lines} lines" + ("" if not bad else f" / {bad} mismatched"))
     pct = 100.0 * (total_bytes - total_escaped) / max(total_bytes, 1)
     print(f"  {total_lines} lines / {total_bytes} bytes total. "
@@ -611,6 +929,11 @@ def main():
                          "8KB MMC5 build; 32768 for the 16KB build and stock ROMs")
     ap.add_argument("--base", help="an existing .sav to build on (carries over names and so on)")
     ap.add_argument("--dump", action="store_true", help="print the generated bytes")
+    ap.add_argument("--allow-long-strings", action="store_true",
+                    help="convert string literals past the machine's %d-byte limit anyway. "
+                         "A closed literal past it raises ?IL ERROR when the line runs "
+                         "(measured); whether an unterminated one does has not been "
+                         "measured, and is refused conservatively" % MAX_STRING)
     ap.add_argument("--selftest", metavar="ROM",
                     help="check the reserved-word list against a Family BASIC .nes, "
                          "and for V3 also decode and re-encode the four built-in programs "
@@ -650,6 +973,7 @@ def main():
         typed_v = any(a == "-V" or a.startswith("-V") or a == "--version"
                       or a.startswith("--version=") for a in sys.argv[1:])
         unused = [name for name, v in (("source", args.source is not None),
+                                       ("--allow-long-strings", args.allow_long_strings),
                                        ("-o", args.output is not None),
                                        ("--base", args.base is not None),
                                        ("--size", args.size is not None),
@@ -691,8 +1015,36 @@ def main():
     prog_addr = lay["prog"]
 
     tokens = TOKENS_BY_VERSION[args.version]
-    program = build_program(open(args.source, encoding="utf-8").read(), tokens,
-                            SMALL_DIGITS_BY_VERSION[args.version])
+    # Every fault build_program raises is a fault in the user's program - a missing line
+    # number, a duplicate, lines out of order, a line or a literal too long. Uncaught they
+    # arrived as a traceback with this file's own source in it. `fb-fds-file.py` already
+    # catches the same exception for the same reason (found in its own review); the
+    # rule had only ever been applied on that side.
+    # ⚠️ Same reasoning as `fb-fds.py`: the output is opened for truncation, so naming an
+    # input destroys it. `prog.bas -o prog.bas` exited successfully with the source
+    # replaced by save data (found in review).
+    if args.output and os.path.exists(args.output):
+        for what, path in (("the source", args.source), ("--base", args.base)):
+            if path and os.path.exists(path) and os.path.samefile(path, args.output):
+                sys.exit(f"-o names {what} ({args.output}); this will not write over its "
+                         f"own input")
+    try:
+        with open(args.source, encoding="utf-8") as fh:
+            source = fh.read()
+    except UnicodeDecodeError as e:
+        # A `.bas` is text. Handing this one a disk image or a ROM is an easy slip, and
+        # the codec's own words ("invalid start byte") do not say which mistake was made.
+        # `UnicodeDecodeError` is a `ValueError`, so it was already refused rather than
+        # thrown - this only changes the wording (raised in review; the traceback it claimed
+        # does not happen).
+        sys.exit(f"{args.source}: not text ({e.reason} at byte {e.start}) - a program "
+                 f"source is what goes here, not a disk image or a ROM")
+    try:
+        program = build_program(source, tokens,
+                                SMALL_DIGITS_BY_VERSION[args.version],
+                                args.allow_long_strings)
+    except ValueError as e:
+        sys.exit(f"{args.source}: {e}")
     end_addr = prog_addr + len(program)                # the address AFTER the terminator
     capacity = top + 1 - prog_addr
     if len(program) > capacity:
@@ -718,7 +1070,8 @@ def main():
     sav[ep] = end_addr & 0xFF
     sav[ep + 1] = end_addr >> 8
 
-    open(args.output, "wb").write(bytes(sav))
+    with open(args.output, "wb") as fh:
+        fh.write(bytes(sav))
 
     print(f"{lay['name']} / area ${prog_addr:04X}-${top:04X}"
           f" ({capacity} bytes)")
@@ -732,5 +1085,34 @@ def main():
             print("  " + program[i:i + 16].hex(" "))
 
 
+
+def _run(fn):
+    """Turn a filesystem refusal into a sentence, at the one place every path ends up.
+
+    Every tool here takes paths from the command line, and until 2026-08-26 a missing or
+    unreadable one arrived as a `FileNotFoundError` traceback with this file's own source
+    in it - while every other bad input was refused in words (found in review).
+    Catching it per `open()` would have meant the same rule at a dozen call sites; here it
+    is one place per tool.
+
+    ⚠️ **One place per tool, not one place** - this function is copied into each of them,
+    which is the shape this project usually refuses. It is allowed here for a stated
+    reason: every tool in `tools/` is a single file that runs on its own with nothing but
+    the standard library, so there is nowhere shared to put it that does not make the
+    tools depend on each other. What makes copies dangerous is holding a **fact** that can
+    drift apart; this holds none - no address, no version, no size - so two copies can
+    only ever differ in wording, not in what they decide.
+
+    `BrokenPipeError` is deliberately not caught: `| head` closing the pipe is not a fault
+    to report, and turning it into a message would put one on every truncated listing."""
+    try:
+        return fn()
+    except BrokenPipeError:
+        raise
+    except OSError as e:
+        where = f"{e.filename}: " if getattr(e, "filename", None) else ""
+        sys.exit(f"{where}{e.strerror or e}")
+
+
 if __name__ == "__main__":
-    main()
+    _run(main)

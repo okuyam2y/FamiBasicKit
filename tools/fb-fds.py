@@ -67,9 +67,19 @@ disassembly:
   * the interrupt vector table
   * the boot path that goes straight into GAME BASIC without taking the menu away
 
-and the parts of `FC-DiskBASIC` that are its author's own code are **not used**: no save
-hook, no `IPL-PRG` filler file, no `BGTOOL` rename. The disk therefore carries three files
-instead of four and behaves slightly differently - see "Differences" below.
+and nothing `FC-DiskBASIC` carries is used here: no save hook, no `IPL-PRG` filler file,
+no `BGTOOL` rename. The disk therefore carries three files instead of four and behaves
+slightly differently - see "Differences" below.
+
+⚠️ Whose code that is, is not this file's to say. This paragraph used to call it "the
+parts that are its author's own code", and its author says otherwise: shown this build,
+they replied that they **take no credit for the patch code** - they reconstructed the
+program from the magazine type-in, disassembled it, and turned it into a `ca65` setup
+(2026-08-25, https://github.com/TakuikaNinja/FC-DiskBASIC/issues/1). So the code avoided
+here traces back to the 1988 article rather than to that repository. Avoiding it stands,
+for a reason nearer the source than the one first written down: neither the repository nor
+the article comes with a licence. The same reply confirmed the credit above reads
+correctly.
 
 The `BGTOOL` rename exists over there because that build removes the title menu, and the
 menu was the only way into `BG GRAPHIC`. This one leaves the menu answerable instead, so
@@ -116,6 +126,7 @@ of the comparison loop itself** rather than trusting a number written down here:
 import argparse
 import hashlib
 import re
+import os
 import sys
 
 # --------------------------------------------------------------------------------------
@@ -998,6 +1009,12 @@ def file_blocks(number, file_id, name, address, kind, data):
     """Blocks 3 and 4 for one file."""
     if len(name) != 8:
         raise ValueError(f"a file name is 8 characters: {name!r}")
+    # The size field is two bytes. A larger file reached `to_bytes` and came out as
+    # `OverflowError: int too big to convert` - a traceback for an ordinary bad input,
+    # since `--kyodaku` takes a file the user chooses (found in review).
+    if len(data) > 0xFFFF:
+        raise ValueError(f"a file block holds at most {0xFFFF} bytes and this one is "
+                         f"{len(data)}; the size field on the disk is two bytes wide")
     hdr = (bytes([BLOCK_FILE_HEADER, number, file_id]) + name
            + address.to_bytes(2, "little") + len(data).to_bytes(2, "little")
            + bytes([kind]))
@@ -1258,7 +1275,10 @@ def build(rom_path, kyodaku, out_path, fwnes_header=False, expect=None):
     if fwnes_header:
         image = FWNES_MAGIC + bytes([1]) + bytes(11) + image
 
-    open(out_path, "wb").write(image)
+    # `with`, so a failure that only surfaces on flush or close reaches `_run` instead of
+    # being discarded during finalization while the lines below report success.
+    with open(out_path, "wb") as fh:
+        fh.write(image)
     md5 = hashlib.md5(image).hexdigest()
     print()
     print(f"## output: {out_path}")
@@ -1300,6 +1320,18 @@ def main():
                     help="fail unless the image comes out to this MD5")
     args = ap.parse_args()
 
+    # ⚠️ **`-o` must not name something this is about to read.** `os.path.samefile` and not
+    # a string comparison, because a symlink, a hard link or a different spelling of the
+    # same path all reach the same bytes - and the output is opened for truncation, so
+    # naming an input destroys it after it has been read. `fb-fds-file.py` has had this
+    # guard since its own review; the other two tools did not (found in review).
+    if args.output and os.path.exists(args.output):
+        for what, path in (("the ROM", args.rom), ("the BIOS", args.bios),
+                           ("the licence screen", args.kyodaku)):
+            if path and os.path.exists(path) and os.path.samefile(path, args.output):
+                sys.exit(f"-o names {what} ({args.output}); this will not write over its "
+                         f"own input")
+
     try:
         if args.bios:
             kyodaku = kyodaku_from_bios(args.bios)
@@ -1315,5 +1347,34 @@ def main():
     return 0
 
 
+
+def _run(fn):
+    """Turn a filesystem refusal into a sentence, at the one place every path ends up.
+
+    Every tool here takes paths from the command line, and until 2026-08-26 a missing or
+    unreadable one arrived as a `FileNotFoundError` traceback with this file's own source
+    in it - while every other bad input was refused in words (found in review).
+    Catching it per `open()` would have meant the same rule at a dozen call sites; here it
+    is one place per tool.
+
+    ⚠️ **One place per tool, not one place** - this function is copied into each of them,
+    which is the shape this project usually refuses. It is allowed here for a stated
+    reason: every tool in `tools/` is a single file that runs on its own with nothing but
+    the standard library, so there is nowhere shared to put it that does not make the
+    tools depend on each other. What makes copies dangerous is holding a **fact** that can
+    drift apart; this holds none - no address, no version, no size - so two copies can
+    only ever differ in wording, not in what they decide.
+
+    `BrokenPipeError` is deliberately not caught: `| head` closing the pipe is not a fault
+    to report, and turning it into a message would put one on every truncated listing."""
+    try:
+        return fn()
+    except BrokenPipeError:
+        raise
+    except OSError as e:
+        where = f"{e.filename}: " if getattr(e, "filename", None) else ""
+        sys.exit(f"{where}{e.strerror or e}")
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_run(main))
