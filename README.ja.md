@@ -75,6 +75,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 | `tools/fb-mmc5-16k.py` | 移動済みの ROM から 16KB 版の MMC5 ROM を作る |
 | `tools/fb-fds.py` | ディスクシステムのイメージを作る（ディスクの `SAVE`/`LOAD` つき。V2.1A・V3） |
 | `tools/fb-fds-file.py` | 使用済みディスクイメージ内のプログラムを PC から読み書きする |
+| `tools/fb-kana-layout.py` | かなの配列を JIS キーボードのキートップに合わせる。英数の打鍵は変わらない |
 | `tools/fb-reach.py` | 指定したアドレスがディスク版で実行される可能性があるかを判定する |
 | `tools/fb-basic-to-sav.py` | テキストの BASIC を `.sav` に変換する（ROM を使った自己検証つき） |
 | `tools/fb-disasm.py` | 再帰下降の逆アセンブラ。アドレス参照の全数調査に使う |

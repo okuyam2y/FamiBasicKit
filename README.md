@@ -77,6 +77,7 @@ neither of the above:
 | `tools/fb-mmc5-16k.py` | Builds the 16KB MMC5 ROM from the relocated image |
 | `tools/fb-fds.py` | Builds the Famicom Disk System image, with disk `SAVE`/`LOAD` (V2.1A and V3) |
 | `tools/fb-fds-file.py` | Reads and writes the saved program inside a used disk image, from a PC |
+| `tools/fb-kana-layout.py` | Lays the kana out to match a JIS keyboard's keytops; the ASCII tables are left byte-identical |
 | `tools/fb-reach.py` | Answers "can this address ever run on the disk build?" soundly |
 | `tools/fb-basic-to-sav.py` | Text BASIC → `.sav`, with a ROM-driven self-test |
 | `tools/fb-disasm.py` | Recursive-descent disassembler; used to enumerate every address reference |
