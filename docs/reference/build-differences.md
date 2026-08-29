@@ -49,6 +49,27 @@ them apart: the display subtracts the few bytes BASIC keeps for itself.
 at 4KB. V3 starts at `$6000` and reaches 8KB. [ram-expansion.md](ram-expansion.md) has the
 detail.
 
+### What the 16KB build had to fix to keep `SAVE` working
+
+The table says `SAVE` on the MMC5 build is the cassette, unchanged. Keeping it that way
+took a patch, because widening the area past `$8000` broke it.
+
+`SAVE` writes the program's length into the cassette header, and reached that length
+through BASIC's general-purpose **signed** 16-bit subtract, which refuses an operand with
+bit 15 set. While the area ended at `$6FFF` or `$7FFF` no address could have that bit. At
+16KB the end of a large program does, and **`SAVE` alone** fails with `?OV ERROR`: `RUN`
+still works and `BYTES FREE` is still right, so nothing shows until the program is written
+out. It is a boundary and not a size — measured on hardware, a 7,607-byte program ending
+below `$8000` saves and a larger one does not.
+
+The builder patches **the caller, not the shared subtract**: making the subtract unsigned
+would change every other subtraction in BASIC, so the length is computed inline instead,
+in the 21 bytes already there. A 16,029-byte program has since gone out to a real data
+recorder and come back — `SAVE`, power cycle, `LOAD`, `RUN`, answers matching.
+
+**The NROM build never had this.** Its area ends at `$7FFF`, so the sign bit is out of
+reach.
+
 ### What "done" means for the disk build
 
 `SAVE` and `LOAD` were confirmed on a real Famicom (RAM adapter + FDSKey) by typing them

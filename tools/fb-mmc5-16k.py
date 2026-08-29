@@ -652,6 +652,86 @@ def main():
                      f"({bytes(resident_a[off:off + 2]).hex(' ')}): {why}")
         put_a(addr + 1, [old_page], [BG_PAGE], why)
 
+    def reloc_bank(addr, size, why):
+        """Which bank holds `size` bytes at `addr` in the **relocated** address space.
+
+        Every address handed to this is derived as `stock + delta`, never written out.
+        A hard-coded relocated address keeps pointing at the old place the moment
+        `--delta` changes, and the patch then lands in the middle of some other
+        instruction without anything noticing.
+        """
+        for bank, base in ((bank6, 0xC000), (bank7, 0xE000)):
+            if base <= addr and addr + size <= base + BANK:
+                return bank, addr - base
+        sys.exit(f"${addr:04X}+{size}: does not fall inside a single relocated bank "
+                 f"($C000-$FFFF). Check --delta: {why}")
+
+    def put_reloc(addr, expect, new, why):
+        """`put_a` for the relocated banks: refuse to write unless what is already there
+        is exactly what this patch was written against."""
+        assert len(new) == len(expect), "a patch in place has to keep the same length"
+        bank, off = reloc_bank(addr, len(expect), why)
+        got = bytes(bank[off:off + len(expect)])
+        if got != bytes(expect):
+            sys.exit(f"${addr:04X}: differs from expectation "
+                     f"({got.hex(' ')} != {bytes(expect).hex(' ')}): {why}")
+        bank[off:off + len(new)] = bytes(new)
+
+    # --- SAVE: the cassette header length has to be computed unsigned ---------
+    # `SAVE` writes the program's length into the cassette header, and reached it by
+    # calling BASIC's general-purpose **signed** 16-bit subtract (`$8E0B` stock), which
+    # refuses either operand once bit 15 is set:
+    #
+    #     $8E1A  LDA $29 / BMI ...     ; high byte of the end address
+    #     $8E1E  LDA $2D / BMI ...     ; high byte of the start address
+    #     $8E2C  JMP $8EF2             ; -> LDA #$05 / JMP $B237 = ?OV ERROR
+    #
+    # While the area ended at `$6FFF` (or `$7FFF` once expanded) that branch could never
+    # fire. At 16KB the end address crosses `$8000`, reads as negative, and **`SAVE`
+    # alone** dies with `?OV ERROR`: `RUN` still works and `BYTES FREE` is still right,
+    # so nothing gives it away until a program is written out. Measured on hardware
+    # 2026-08-28 - a 7,607-byte program (ending below `$8000`) saves, one crossing
+    # `$8000` does not, so it is the boundary and not the size. **This is a 16KB-only
+    # problem**: the 8KB build ends at `$7FFF` and cannot reach the branch.
+    #
+    # WARNING: **do not touch `$8E0B` itself.** It is the subtract the whole interpreter
+    # shares, and making it unsigned would change every other subtraction in BASIC. Only
+    # this one caller wants an unsigned result, so the caller is what changes: an inline
+    # SBC pair. That comes to 19 bytes against the original 21, so two `NOP`s pad it out
+    # and it fits **where it already sits** - which it has to, because the last bank has
+    # no free run of 32 bytes anywhere to move it to.
+    #
+    # `$28/$29` (the length) and `$2C/$2D` (the start address) are left holding what the
+    # original code left there: the cassette write that follows reads both.
+    save_len_at = 0x9D81 + delta          # stock $9D81, inside the moved interpreter
+    sub16 = 0x8E0B + delta                # the shared signed subtract, as the caller sees it
+    put_reloc(
+        save_len_at,
+        # LDA $07 / STA $28 / LDA $08 / STA $29 / JSR sub16
+        #     / LDA $28 / STA $0512 / LDA $29 / STA $0513
+        bytes([0xA5, 0x07, 0x85, 0x28, 0xA5, 0x08, 0x85, 0x29,
+               0x20, sub16 & 0xFF, sub16 >> 8,
+               0xA5, 0x28, 0x8D, 0x12, 0x05, 0xA5, 0x29, 0x8D, 0x13, 0x05]),
+        # SEC / LDA $07 / SBC $2C / STA $28 / STA $0512
+        #     / LDA $08 / SBC $2D / STA $29 / STA $0513 / NOP / NOP
+        bytes([0x38,
+               0xA5, 0x07, 0xE5, 0x2C, 0x85, 0x28, 0x8D, 0x12, 0x05,
+               0xA5, 0x08, 0xE5, 0x2D, 0x85, 0x29, 0x8D, 0x13, 0x05,
+               0xEA, 0xEA]),
+        "SAVE: the length written into the cassette header")
+
+    # The fix above is deliberately in the caller. Check that the shared subtract really
+    # was left alone: its bytes must still be exactly what fb-relocate.py produced.
+    # Without this, "only the caller changed" is a claim in a comment instead of a fact
+    # the build refuses to proceed without.
+    sub16_end = 0x8EF4 + delta            # out through the ?OV ERROR stub at $8EF2
+    sub16_len = sub16_end - sub16 + 1
+    sub_bank, sub_off = reloc_bank(sub16, sub16_len, "BASIC's shared signed subtract")
+    if bytes(sub_bank[sub_off:sub_off + sub16_len]) != \
+       bytes(rel_prg[sub16 - 0x8000:sub16_end + 1 - 0x8000]):
+        sys.exit(f"${sub16:04X}-${sub16_end:04X} was modified. BASIC's shared signed "
+                 f"subtract must stay untouched - only the SAVE caller changes")
+
     # --- Lay out the banks ---------------------------------------------------
     banks = []
     c_low = rel_prg[0xC000 - 0x8000:0xD000 - 0x8000]  # duplicate kept alive during a swap
@@ -682,6 +762,9 @@ def main():
           f" (was {'/'.join(f'${p:02X}00' for p in sorted(bg_was))};"
           f" the immediates at $B1BE/$B1CB/$B20C,"
           f" i.e. the operands of the instructions at $B1BD/$B1CA/$B20B)")
+    print(f"  SAVE length computed unsigned at ${save_len_at:04X} (stock $9D81)"
+          f" - was JSR ${sub16:04X}, the signed subtract that rejected any end"
+          f" address past $8000")
     print(f"  init ${INIT_ORG:04X} ({len(init.code)} bytes)"
           f" / loader ${LOADER_ORG:04X} ({len(loader.code)} bytes)"
           f" / title graphic ${BG_DEST:04X}-${BG_DEST + 0x3FF:04X}")
