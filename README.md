@@ -20,7 +20,7 @@ reach 16KB. The same tools also rebuild the cartridge as a Famicom Disk System i
 | NROM 8KB | V3.0 | `8182 BYTES FREE` | 5 PRG bytes + 1 header byte |
 | MMC5 16KB | V3.0 | `16374 BYTES FREE` | MMC5 conversion + relocating the interpreter |
 | Disk BASIC | V2.1A or V3.0 | 8,126 / 8,182 bytes | rebuilt as an FDS image; CHR becomes RAM and the FDS sound channel is reachable |
-| VRC7 | V3.0 | `8182 BYTES FREE` | put on the VRC7 mapper; **FM sound answers `POKE`**, and the area stays 8KB |
+| VRC7 | V2.1A or V3.0 | `8182 BYTES FREE` (V3), `1982` or `8126 BYTES FREE` with `--8k` (V2.1A) | put on the VRC7 mapper; **FM sound answers `POKE`**. ⚠️ the V2.1A build loses the boot demo |
 
 There is nothing between 8KB and 16KB: RAM is mapped in 8KB units, so 12KB is not an
 option. The disk build is not the roomiest: choose it to save to disk, to rewrite
@@ -40,8 +40,9 @@ characters while a program runs, or to reach the FDS sound channel.
 # a disk
 ./tools/fb-fds.py "Family BASIC V3 (Japan).nes" --bios disksys.rom -o fcbasic3.fds
 
-# FM sound (V3 only; 8KB, not 16KB - the FM ports are inside what 16KB turns into RAM)
+# FM sound (8KB, not 16KB - the FM ports are inside what 16KB turns into RAM)
 ./tools/fb-vrc7.py "V3 (8KB).nes" -o "Family BASIC V3.0 (VRC7).nes"
+./tools/fb-vrc7.py --8k "Family BASIC (Japan) (Rev 2).nes" -o "V2.1A (VRC7 8KB).nes"
 ```
 
 Each tool verifies its input before doing anything and refuses a dump it does not

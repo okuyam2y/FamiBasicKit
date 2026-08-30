@@ -20,7 +20,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 | NROM 8KB | V3.0 | `8182 BYTES FREE` | PRG 5 バイト ＋ ヘッダ 1 バイト |
 | MMC5 16KB | V3.0 | `16374 BYTES FREE` | MMC5 化 ＋ BASIC 本体の再配置 |
 | ディスク版 | V2.1A / V3.0 | 8,126 / 8,182 バイト | ディスクシステムのイメージとして再構成。CHR が RAM になり、FDS 音源も使える |
-| VRC7 版 | V3.0 | `8182 BYTES FREE` | VRC7 のマッパーに載せ替え。**`POKE` で FM 音源が鳴る**。容量は 8KB のまま |
+| VRC7 版 | V2.1A または V3.0 | V3 は `8182 BYTES FREE`、V2.1A は入力のまま（`--8k` で `8126 BYTES FREE`） | VRC7 のマッパーに載せ替え。**`POKE` で FM 音源が鳴る**。⚠️ V2.1A 版は起動時のデモを失う |
 
 8KB と 16KB の中間はありません。RAM は 8KB 単位で割り当てるため、12KB という選択肢は
 存在しません。ディスク版は容量では最大になりません。ディスクへの保存、実行中の文字の
@@ -40,8 +40,9 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 # ディスク
 ./tools/fb-fds.py "Family BASIC V3 (Japan).nes" --bios disksys.rom -o fcbasic3.fds
 
-# FM 音源（V3 のみ）。容量は 8KB のまま。16KB 版とは両立しません
+# FM 音源。容量は 8KB のまま。16KB 版とは両立しません
 ./tools/fb-vrc7.py "V3 (8KB).nes" -o "Family BASIC V3.0 (VRC7).nes"
+./tools/fb-vrc7.py --8k "Family BASIC (Japan) (Rev 2).nes" -o "V2.1A (VRC7 8KB).nes"
 ```
 
 各ツールは処理を始める前に入力を検査し、想定しているダンプでなければ何もせずに終了します。

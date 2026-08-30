@@ -3,8 +3,9 @@
 [日本語](vrc7.ja.md)
 
 A Konami VRC7 cartridge carries a six-channel FM sound chip whose two ports are inside the
-address space BASIC can already write to. This build puts V3 on that mapper, changes
-nothing else about BASIC, and leaves the free area where plain mapper 0 leaves it.
+address space BASIC can already write to. This build puts BASIC on that mapper - **V3 or
+V2.1A** - and changes nothing else about it. On V3 it leaves the free area where plain
+mapper 0 leaves it; on V2.1A it can widen the area as well, and costs the boot demo.
 
 **What it buys is the sound, not the room.** It carries the area over from whatever it is
 given: expand first and you get 8KB and `8182 BYTES FREE`, exactly what
@@ -34,13 +35,15 @@ without it you get V3's stock 4KB.
 | the VRC7 build, from the stock dump | MD5 `a87904a82b1fc9dbe92d5bef07b43728`, same size, V3's own 4KB |
 | header | mapper 85, **submapper 2 (VRC7a)**, PRG 64KB, CHR 8KB, battery-backed WRAM as the input declared |
 
-**Only these two inputs are accepted**: the stock V3 dump, and the 8KB build made from
-it. `fb-vrc7.py` takes a SHA-256 of the whole image (allowing only the five bytes the 8KB
-step changes, and only all five together) and compares the header against stock's byte for
-byte, the RAM declaration having to match the area those five bytes describe. Anything
-else stops the build. V1/V2 are refused for a second reason as well —
-their `GAME` loader is a different routine. A dump that differs anywhere the structural
-checks do not look would otherwise be converted faithfully, damage included.
+**Four inputs are accepted, and nothing else**: the stock V3 dump and the 8KB build made
+from it; the stock V2.1A dump and the 4KB build made from it. Which version a dump is gets
+decided by the banner BASIC prints, and the dump is then authenticated whole — a SHA-256
+of the image (allowing only the bytes the expansion step changes, and only all of them
+together) and the header compared byte for byte, with the RAM declaration having to match
+the area those bytes describe. Anything else stops the build, and says which of the two it
+failed to be. V1.0 and V2.0A are refused: nothing here has been measured against them.
+A dump that differs anywhere the structural checks do not look would otherwise be
+converted faithfully, damage included.
 
 ## The V2.1A build
 
