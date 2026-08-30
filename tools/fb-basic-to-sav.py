@@ -91,6 +91,48 @@ LAYOUTS = {
 }
 TOP_EXPANDED = 0x7FFF        # for a ROM patched by fb-expand-basic-area.py
 TOP_16K = 0x9FFF             # the 16KB build from fb-mmc5-16k.py ($6000-$9FFF)
+
+# ★**The last four bytes of the area are the interpreter's, and the last one is a trap.**
+#
+# `top + 1 - prog` is how much address space there is. It is not how much BASIC thinks it
+# has: every build reports exactly four bytes fewer, which is what makes it a rule rather
+# than a coincidence -
+#
+#     V2.1A          $703E-$77FF   1986 -> 1982 BYTES FREE
+#     V2.1A 4KB      $703E-$7FFF   4034 -> 4030
+#     V2.1A --8k     $603E-$7FFF   8130 -> 8126
+#     V3 expanded    $6006-$7FFF   8186 -> 8182
+#     16KB           $6006-$9FFF  16378 -> 16374
+#
+# Measured on 2026-08-30 on an expanded V3, by building programs of an exact length, then
+# running each one and reading the machine's own screen:
+#
+#     8183 bytes  end $7FFD   0 BYTES FREE       runs
+#     8184 bytes  end $7FFE   65535 BYTES FREE   ?OM ERROR - the count has wrapped
+#     8185 bytes  end $7FFF   65534 BYTES FREE   ?OM ERROR
+#     8186 bytes  end $8000   65533 BYTES FREE   ★ **runs, and eats its own first line**
+#
+# The last row is the one that matters, and it was this tool's own ceiling. With the end
+# pointer at `$8000` the interpreter's out-of-memory guard stops firing - the same signed
+# comparison that broke `SAVE` above `$8000`, fixed in the 16KB ROM on 2026-08-29, except
+# that this one is in the variable allocator and cannot be patched out of BASIC. The first
+# assignment then writes its variable at `$6004`, over the start of the program. Every
+# write during that run was counted: six bytes, all of them there.
+#
+# So the ceiling is what the machine says is free, which is also what `fb-fds-file.py` has
+# always used.
+#
+# ★ This does **not** promise a program of this size will run. Variables are allocated
+# after the program, so anything near the ceiling that assigns one still gets `?OM ERROR`
+# (measured at 8182 as well as at 8180). That is the right answer, and the point of the
+# change: the machine now refuses out loud instead of writing over the program.
+#
+# ⚠️ Two cases are outside the measurement. The 16KB build ends its area at `$A000`, which
+# meets the same `>= $8000` condition and so is very likely the same trap - it is not shown
+# here, because the attempt to measure it could not even place a program correctly and a
+# run whose control fails proves nothing. And V1.0 starts its body a byte lower, so four is
+# a byte conservative there.
+AREA_RESERVED = 4
 SAV_SIZES = (8192, 32768)    # 8KB for an MMC5 build; 32768 for a stock ROM on MiSTer
 
 # Longer words must be matched first, so the order is preserved
@@ -225,9 +267,10 @@ def scan_literals(body):
     ⚠️ The operand skip only applies **outside** a string. Inside one, `$12` is a character.
 
     ⚠️ An unterminated literal is measured to the end of the line, which is where it runs
-    to on the machine. Whether the 31-byte limit applies to it has not been measured -
-    what was measured is a closed one - so counting it is the conservative reading, and
-    `--allow-long-strings` is the way past it.
+    to on the machine. **The 31-byte limit applies to it exactly as to a closed one** -
+    measured on 2026-08-30, on V2.1A and V3 alike, by typing the line in and running it.
+    Counting it used to be the conservative reading; it is now the measured one, and
+    `--allow-long-strings` is still the way past it.
     """
     lengths, i, inside, start, pending = [], 0, False, 0, 0
     while i < len(body):
@@ -579,6 +622,11 @@ def decode_body(data, tokens, small_digits=True):
 # ⚠️ Why it reports as `IL` is not established. The error table at `$B37F` reads
 # `NF SN RG OD IL OV OM UL SO DD`, so `SO` - string overflow - exists and is a different
 # code that this does not raise. The number is measured; the reason is not.
+#
+# ★ **The same 31 holds for a literal that is never closed** - measured on 2026-08-30 under
+# FCEUX, on V2.1A and V3, by typing the line in and running it. 31 prints, 32 raises. The
+# control was the closed case above, reproduced by the same method before the open one was
+# trusted. Also measured: the error comes at `RUN`, not when the line is entered.
 MAX_STRING = 31
 
 
@@ -612,9 +660,8 @@ def encode_line(number, body_text, tokens, small_digits, allow_long_strings=Fals
         # one. It refuses, and says how to override - the message is the escape hatch.
         measured = ("the machine raises ?IL ERROR past "
                     f"{MAX_STRING} (measured)" if closed else
-                    f"a closed literal past {MAX_STRING} raises ?IL ERROR (measured); "
-                    f"whether an unterminated one does has **not** been measured, so this "
-                    f"refusal is the conservative reading")
+                    f"the machine raises ?IL ERROR past {MAX_STRING} (measured), and an "
+                    f"unterminated literal is no different - that was measured too")
         raise ValueError(f"line {number} holds a string literal of {over} bytes; "
                          f"{measured}. If that line never runs, or you know better, "
                          f"pass --allow-long-strings.")
@@ -933,7 +980,7 @@ def main():
                     help="convert string literals past the machine's %d-byte limit anyway. "
                          "A closed literal past it raises ?IL ERROR when the line runs "
                          "(measured); whether an unterminated one does has not been "
-                         "measured, and is refused conservatively" % MAX_STRING)
+                         "measured for both closed and unterminated literals" % MAX_STRING)
     ap.add_argument("--selftest", metavar="ROM",
                     help="check the reserved-word list against a Family BASIC .nes, "
                          "and for V3 also decode and re-encode the four built-in programs "
@@ -1046,10 +1093,11 @@ def main():
     except ValueError as e:
         sys.exit(f"{args.source}: {e}")
     end_addr = prog_addr + len(program)                # the address AFTER the terminator
-    capacity = top + 1 - prog_addr
+    capacity = top + 1 - prog_addr - AREA_RESERVED
     if len(program) > capacity:
         sys.exit(f"program does not fit in the area: {len(program)} bytes "
-                 f"(${prog_addr:04X}-${top:04X} holds {capacity})")
+                 f"(${prog_addr:04X}-${top:04X} holds {top + 1 - prog_addr}, of which the "
+                 f"machine reports {capacity} free - see AREA_RESERVED)")
 
     if args.base:
         sav = bytearray(open(args.base, "rb").read())

@@ -545,9 +545,14 @@ def text_to_program(text, tokens, lay):
 
     It calls `build_program` directly rather than running the tool, because the tool also
     lays out a `.sav`: V2 there means the area at `$7000`, which stops at `$7FFF` and so
-    caps a program at 4,034 bytes. The disk build moved the area to `$6000` and has room
-    for 8,130, and a program in between is perfectly legal on a disk - the tool would
+    caps a program at 4,030 bytes. The disk build moved the area to `$6000` and has room
+    for 8,126, and a program in between is perfectly legal on a disk - the tool would
     refuse it for a reason that does not apply here (found in review).
+
+    ⚠️ Both figures are the machine's own `BYTES FREE`, four below the address space each
+    area covers. They used to be given as 4,034 and 8,130 here, which is the whole area -
+    the four bytes at the top belong to the interpreter, and the last of them is a trap
+    (`fb-basic-to-sav.py`, `AREA_RESERVED`).
 
     The tokenizer itself is version-specific and shared; only the layout differs. Nothing
     inside a program refers to an address - lines carry a length, not a link - so the same
@@ -755,9 +760,10 @@ def main():
         note(f"  ⚠️ line {number} holds a string literal past the machine's limit; it "
              + ("will raise ?IL ERROR if that line runs (measured)"
                 if closed else
-                "is unterminated, and whether that raises ?IL ERROR has not been measured"))
+                "is unterminated, and will raise ?IL ERROR just the same if that line "
+                "runs (measured 2026-08-30, on V2.1A and V3)"))
     end = lay.load_at + lay.body_off + len(body)
-    # fb-basic-to-sav.py lays V2 out at $7000 and stops at $7FFF, so it accepts 4,034
+    # fb-basic-to-sav.py lays V2 out at $7000 and stops at $7FFF, so it accepts 4,030
     # bytes; the disk build moved the area to $6000 and has far more. A program between
     # the two is legal here and refused there, so the check that matters is this one - and
     # the message has to name the real ceiling (found in review).
@@ -767,13 +773,20 @@ def main():
     # what the machine reports free - for both builds, which is what makes it look like a
     # rule rather than a coincidence (found in review).
     #
-    # ⚠️ **What those four bytes are is not established anywhere in this repository.**
-    # `bytes_free` was read off the screen; `$7FFF` is where the RAM ends. So this takes
-    # the smaller of the two on purpose: refusing four bytes that might have been usable
-    # costs four bytes, and accepting four bytes the interpreter has spoken for costs a
-    # program that misbehaves after it loads. **This is a conservative choice, not a
-    # measurement.** What would settle it: fill the area to `bytes_free`, then to
-    # `bytes_free + 4`, save and reload each on a machine, and see which comes back.
+    # ★**Measured on 2026-08-30, and the conservative choice was the right one.** Programs
+    # of an exact length were built and run under FCEUX on an expanded V3, whose area ends
+    # at the same `$7FFF`:
+    #
+    #     bytes_free + 1   end $7FFD   0 BYTES FREE       runs
+    #     bytes_free + 2   end $7FFE   65535 BYTES FREE   ?OM ERROR - the count has wrapped
+    #     bytes_free + 3   end $7FFF   65534 BYTES FREE   ?OM ERROR
+    #     bytes_free + 4   end $8000   65533 BYTES FREE   ★ runs, and eats its own first line
+    #
+    # The last one is the whole cost of getting this wrong: with the end pointer at `$8000`
+    # the out-of-memory guard stops firing - the signed comparison that broke `SAVE` above
+    # `$8000` - and the first variable assignment is written over the start of the program.
+    # `fb-basic-to-sav.py` offered exactly that size until the same day; it now stops at
+    # the same place, from its own `AREA_RESERVED`.
     if len(body) > lay.bytes_free:
         sys.exit(f"the program is {len(body)} bytes and this build reports "
                  f"{lay.bytes_free} BYTES FREE. It is {len(body) - lay.bytes_free} "
