@@ -42,6 +42,48 @@ else stops the build. V1/V2 are refused for a second reason as well —
 their `GAME` loader is a different routine. A dump that differs anywhere the structural
 checks do not look would otherwise be converted faithfully, damage included.
 
+## The V2.1A build
+
+V2.1A goes on the same mapper, and here the tool can widen the area as well:
+
+```sh
+./tools/fb-vrc7.py "Family BASIC (Japan) (Rev 2).nes" -o "V2.1A (VRC7).nes"
+./tools/fb-vrc7.py --8k "Family BASIC (Japan) (Rev 2).nes" -o "V2.1A (VRC7 8KB).nes"
+```
+
+| | |
+|---|---|
+| from | `Family BASIC (Japan) (Rev 2).nes`, the stock V2.1A dump |
+| the VRC7 build | MD5 `06e25583ea5bc45ad89d69b2715f4c67`, `1982 BYTES FREE` — the area the input had |
+| with `--8k` | MD5 `17add98da0d118ef4204a6400029312c`, `8126 BYTES FREE`, the area at `$6000-$7FFF` |
+| from the 4KB build, with `--8k` | the same MD5: the 4KB step already sets both constants to what 8KB wants |
+| header | mapper 85, submapper 2 (VRC7a), **PRG 32KB** (V3's build is 64KB), CHR 8KB |
+
+**`--8k` is V2.1A only.** V3's area is widened by `fb-expand-basic-area.py` before this
+tool runs; V2.1A's is widened here, because the same move needs seventeen more bytes
+patched and the disk build already works out which ones.
+
+### What it costs: the boot demo
+
+⚠️ **This build loses the conversation and fortune-telling program** that V2.1A runs at
+power-on — the one that asks for your name and talks back. The machine boots straight to
+`GAME BASIC` instead.
+
+That is where the room comes from. VRC7 needs its init code in `$E000-$FFFF`, V2.1A fills
+every byte of that window, and the only part of it that nothing else reaches is the demo's
+— 4,090 bytes at `$F000-$FFF9`. Eight bytes point the demo's handler at BASIC's own and
+skip its wait loop, and the region is free.
+
+**The menu is not lost.** `1--BASIC`, `2--BG GRAPHIC` and `3--END` all still work, and so
+do the keyboard, `PLAY` and the cassette routines: they are reached after `$80AD`, which
+installs its own handler and never used the demo's. That was measured on a mapper-0 build
+with only those eight bytes changed, and every boot of this build is compared against that
+same twin in FCEUX.
+
+⚠️ **`--8k` and saved programs.** `fb-basic-to-sav.py` cannot write the layout the widened
+area uses yet, so a `.sav` made for V2.1A will not match an `--8k` ROM. Typing programs in
+works normally. Without the flag there is no such difference.
+
 ## Playing a note
 
 `POKE &H9010,<register>` selects an FM register; `POKE &H9030,<value>` writes it.
@@ -118,6 +160,16 @@ build and the mapper-0 build made from the same dump side by side, and on hardwa
 | `GAME 0`-`GAME 3` | ✅ load the same bytes as the stock loader, in the model and in FCEUX |
 | `$9010` is the sound port, not a bank register | ✅ in FCEUX: writing it leaves `$C000-$DFFF` alone, while writing `$9000` visibly switches it |
 | **the note itself** | ✅ **heard on hardware** (MiSTer, 2026-08-30): a program playing one note four times sounded all four times. ⚠️ **Not machine-checked.** FCEUX 2.6.6's `--soundrecord` writes no file here and its Lua cannot read the OPLL; a microphone recording on the development machine caught only one of the four bursts, so it is not an oracle either. Ears are the check |
+
+The V2.1A build was put on the same hardware on 2026-08-30:
+
+| | |
+|---|---|
+| boots | ✅ the `GAME BASIC` menu, with `1--BASIC`, `2--BG GRAPHIC` and `3--END` — **the demo is gone and the menu is not**, which is the claim this build rests on |
+| BASIC | ✅ `NS-HUBASIC V2.1A` / `1982 BYTES FREE` from the default build, and `8126 BYTES FREE` from `--8k` |
+| a program from a `.sav` | ✅ lists and runs on the default build |
+| `POKE` to the FM ports | ✅ a twelve-note program printed all twelve marks and `FM DONE`. **That is the hardware evidence that `$9010` is not a bank register**: if it were, the write would have switched a bank under the running code and the program could not have finished |
+| **the notes themselves** | ✅ **heard on hardware** (2026-08-30). Ears again — the OPLL is write-only, so there is nothing to read back and nothing here to compare |
 
 ## How the ROM is put together
 

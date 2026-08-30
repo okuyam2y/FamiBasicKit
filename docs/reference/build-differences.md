@@ -168,6 +168,17 @@ literals stop at `32767` - see [above](#integer-literals-differ-by-version).
 ⚠️ **A 16KB free area and VRC7's FM sound cannot coexist.** The FM registers are inside
 the `$8000-$9FFF` that the 16KB build turns into RAM. So on a 16KB build `POKE &H9010`
 writes to RAM, not to the sound chip. One or the other, in separate ROMs — a cartridge has
-one mapper. The VRC7 build's area is whatever its input had — 8KB after the expansion
-step, the same as plain mapper 0 gives V3, and V3's own 4KB from an unexpanded dump:
-**what VRC7 buys is the sound, not the room.**
+one mapper. From V3 the VRC7 build's area is whatever its input had — 8KB after the
+expansion step, the same as plain mapper 0 gives V3, and V3's own 4KB from an unexpanded
+dump: **what VRC7 buys is the sound, not the room.**
+
+**From V2.1A the same tool can widen it**, with `--8k`, to the full `$6000-$7FFF` and
+`8126 BYTES FREE`. That is the one build where the mapper swap and the expansion happen in
+the same step, because V2.1A's seventeen extra patch sites are the ones the disk build
+already works out.
+
+⚠️ **and the V2.1A VRC7 build loses the boot demo.** V2.1A fills every byte of
+`$E000-$FFFF`, and the only part of it nothing else reaches is the conversation and
+fortune-telling program's. The menu and everything after it survive. V3 does not pay this:
+its four built-in programs move into their own banks, so the copies at `$E000-$FFF9` go
+dead by themselves.

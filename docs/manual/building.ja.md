@@ -9,8 +9,8 @@
 
 | | NROM 8KB | MMC5 16KB | Disk BASIC | VRC7 |
 |---|---|---|---|---|
-| 元の ROM | V3（V1/V2 は 4KB） | V3 のみ | V2.1A または V3 | V3 のみ |
-| 空き容量 | `8182 BYTES FREE` | `16374 BYTES FREE` | V2.1A から 8,126 バイト、V3 から 8,182 バイト | `8182 BYTES FREE` |
+| 元の ROM | V3（V1/V2 は 4KB） | V3 のみ | V2.1A または V3 | V2.1A または V3 |
+| 空き容量 | `8182 BYTES FREE` | `16374 BYTES FREE` | V2.1A から 8,126 バイト、V3 から 8,182 バイト | V3 なら `8182 BYTES FREE`。V2.1A は入力のまま、`--8k` をつけると `8126 BYTES FREE` |
 | `SAVE` / `LOAD` | カセット | カセット | ディスク | カセット |
 | 必要な環境 | ヘッダの RAM 宣言に従う環境 | 同じ環境＋MMC5 | ディスクシステム（RAM アダプタ可） | 同じ環境＋VRC7 |
 | 追加で使えるもの | なし | CHR バンク、拡張属性、走査線 IRQ、矩形波 2 本と PCM、乗算器 | FDS 音源。CHR が RAM なので実行中に文字の絵を書き換えられる | **`POKE` で鳴らせる FM 音源**（[vrc7.ja.md](../reference/vrc7.ja.md)） |
@@ -23,6 +23,10 @@
 
 VRC7 版で増えるのは音だけで、空き容量はマッパー 0 の 8KB 版と同じです。16KB 版とは
 同時に選べません。FM 音源の窓口が、16KB 版が RAM にしている `$8000-$9FFF` の中にあるためです。
+
+⚠️ **V2.1A の VRC7 版は、電源投入時の会話・占いプログラムを失います。** 初期化コードの
+置き場所がそこしかないためです（`$E000-$FFFF` で他から使われていないのはデモの領域だけ）。
+メニュー・BG GRAPHIC・`PLAY`・カセットのルーチンは残ります（[vrc7.ja.md](../reference/vrc7.ja.md)）。
 
 ## 作り方
 
@@ -41,8 +45,11 @@ ROM は自分で用意してください。このリポジトリに ROM のデ�
 ./tools/fb-fds.py "Family BASIC (Japan) (Rev 2).nes" --bios disksys.rom -o fcbasic.fds
 ./tools/fb-fds.py "Family BASIC V3 (Japan).nes"      --bios disksys.rom -o fcbasic3.fds
 
-# FM 音源（V3 のみ）。上の 8KB 版を渡す。容量は 8KB のまま
+# FM 音源。V3 には上の 8KB 版を渡す（容量は入力のまま引き継ぐ）
 ./tools/fb-vrc7.py "V3 (8KB).nes" -o "Family BASIC V3.0 (VRC7).nes"
+
+# V2.1A も同じ道具。こちらは --8k をつけると領域の拡張までこの道具がやる
+./tools/fb-vrc7.py --8k "Family BASIC (Japan) (Rev 2).nes" -o "V2.1A (VRC7 8KB).nes"
 ```
 
 各ツールは処理を始める前に入力を検査します。想定しているダンプでなければ、
