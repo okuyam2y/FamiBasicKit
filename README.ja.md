@@ -20,6 +20,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 | NROM 8KB | V3.0 | `8182 BYTES FREE` | PRG 5 バイト ＋ ヘッダ 1 バイト |
 | MMC5 16KB | V3.0 | `16374 BYTES FREE` | MMC5 化 ＋ BASIC 本体の再配置 |
 | ディスク版 | V2.1A / V3.0 | 8,126 / 8,182 バイト | ディスクシステムのイメージとして再構成。CHR が RAM になり、FDS 音源も使える |
+| VRC7 版 | V3.0 | `8182 BYTES FREE` | VRC7 のマッパーに載せ替え。**`POKE` で FM 音源が鳴る**。容量は 8KB のまま |
 
 8KB と 16KB の中間はありません。RAM は 8KB 単位で割り当てるため、12KB という選択肢は
 存在しません。ディスク版は容量では最大になりません。ディスクへの保存、実行中の文字の
@@ -38,6 +39,9 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 
 # ディスク
 ./tools/fb-fds.py "Family BASIC V3 (Japan).nes" --bios disksys.rom -o fcbasic3.fds
+
+# FM 音源（V3 のみ）。容量は 8KB のまま。16KB 版とは両立しません
+./tools/fb-vrc7.py "V3 (8KB).nes" -o "Family BASIC V3.0 (VRC7).nes"
 ```
 
 各ツールは処理を始める前に入力を検査し、想定しているダンプでなければ何もせずに終了します。
@@ -60,6 +64,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 - [sav-format.ja.md](docs/reference/sav-format.ja.md) — プログラムの格納形式
 - [token-numbering.ja.md](docs/reference/token-numbering.ja.md) — 命令を追加する場合の規則
 - [mmc5-wram-banks.ja.md](docs/reference/mmc5-wram-banks.ja.md) — MMC5 のバンク番号を決め打ちできない理由と、誤った場合に起きること
+- [vrc7.ja.md](docs/reference/vrc7.ja.md) — FM 音源が鳴るビルド。作り方・レジスタ・音を出すプログラム
 
 **[docs/background/](docs/background/)** — 背景。使用にも改造にも必須ではありません
 
@@ -73,6 +78,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 | `tools/fb-expand-basic-area.py` | 領域の上限値を書き換える（8KB まで。マッパーは変更しない） |
 | `tools/fb-relocate.py` | V3 の BASIC 本体 `$8000-$9FFF` を `$D000` 以降へ移動する |
 | `tools/fb-mmc5-16k.py` | 移動済みの ROM から 16KB 版の MMC5 ROM を作る |
+| `tools/fb-vrc7.py` | VRC7 版の ROM を作る。`POKE &H9010`／`POKE &H9030` が FM 音源に届く |
 | `tools/fb-fds.py` | ディスクシステムのイメージを作る（ディスクの `SAVE`/`LOAD` つき。V2.1A・V3） |
 | `tools/fb-fds-file.py` | 使用済みディスクイメージ内のプログラムを PC から読み書きする |
 | `tools/fb-kana-layout.py` | かなの配列を JIS キーボードのキートップに合わせる。英数の打鍵は変わらない |

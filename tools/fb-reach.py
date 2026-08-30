@@ -73,6 +73,11 @@ TABLE_RANGES = [
 # power-on routine jumps to, and the routines its SAVE/LOAD hooks call.
 ENTRIES = [0xC400, 0x880F, 0xC470, 0x80F0, 0xAA82, 0xADA9, 0x80AD, 0xB5AF, 0x8131, 0xAF88,
            0x9869, 0x978F, 0x980C, 0x9839, 0xB3EB, 0xB3F1]
+# ⚠️ **This address is a V1/V2 fact.** In V1.0, V2.0A and V2.1A `$CDA7` is the handler
+# (`PHP/PHA/TXA/PHA/TYA/PHA...`), installed by `$C444`. **In V3 those bytes are the middle
+# of the reserved-word table** and the NMI handler is `$8971`, put into the `$00ED`
+# trampoline by `$80CA`. `fb-vrc7.py` once justified a design decision with `$CDA7` while
+# only ever accepting V3; the reason was wrong even though the code was not (2026-08-30).
 CART_NMI_HANDLER = 0xCDA7
 
 # Which table each indirect jump goes through, read off the instructions that fill its
@@ -121,7 +126,7 @@ CALL_SITE = 0x918F              # JMP ($0400) - BASIC's CALL
 #     the arithmetic to $9171's `RTS`, the two bytes on top of the stack are the ones just
 #     pushed at $90F0/$90F3, and `RTS` "returns" to them instead. Same trick, same two bytes,
 #     a different tail pressed into service as the landing site (found via `find_rts_tricks()`
-#     itself, R3 - it did not surface with the narrower R1/R2 detector logic).
+#     itself; an earlier, narrower version of the detector did not surface it).
 #
 # The two bytes ($5F/$60) themselves are fed only by: (a) values relayed unchanged through an
 # unwind elsewhere in the FOR/GOSUB/expression-parser subsystem ($9280, $930D - same idiom,
@@ -138,8 +143,8 @@ CALL_SITE = 0x918F              # JMP ($0400) - BASIC's CALL
 # $5F/$60 this scan missed, and `find_rts_tricks()` still only recognizes the "exactly two
 # `PHA`, no stack-affecting instruction or subroutine call in between" shape - a trick built
 # some other way (e.g. balanced `PHA`/`PLA` pairs that leave two net-new bytes on the stack)
-# would not surface at all, the same silent-omission risk three review rounds have now found
-# in this function. If either tool or ROM changes, re-run `--target` and re-check this note
+# would not surface at all, the same silent-omission risk this function has repeatedly turned
+# out to carry. If either tool or ROM changes, re-run `--target` and re-check this note
 # before trusting it again.
 RTS_TRICK_SITES = {
     0x9122: "FOR-loop/expression-parser unwind (marker $00/$FD or $00/$FF) - see comment above",

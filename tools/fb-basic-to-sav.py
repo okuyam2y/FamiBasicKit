@@ -219,8 +219,8 @@ def scan_literals(body):
     `$22` in the line. So `A=34:DATA 11,22` - where 34 encodes as `12 22 00` - looked like
     an open string, `DATA` was taken for text instead of a word, and its fields were
     tokenised. This file says a few lines below what that costs: `READ` then fails with
-    `?TM ERROR` on the machine. **A valid program, silently miscompiled** (found in review,
-    by both reviewers independently, one with `GOTO 34: REM comment`).
+    `?TM ERROR` on the machine. **A valid program, silently miscompiled** (found twice
+    independently, one case being `GOTO 34: REM comment`).
 
     ⚠️ The operand skip only applies **outside** a string. Inside one, `$12` is a character.
 

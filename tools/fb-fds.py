@@ -1071,8 +1071,8 @@ def load_rom(path):
     prg_size, chr_size = d[4] * 16384, d[5] * 8192
     # Slicing past the end of `d` does not raise; it silently returns fewer bytes than
     # prg_size + chr_size asked for. Say so plainly instead of letting a truncated file fall
-    # through to a SHA-1 mismatch below, which is true but blames the wrong thing (found
-    # verifying the size check just added, R4, NIT).
+    # through to a SHA-1 mismatch below, which is true but blames the wrong thing (found while
+    # verifying the size check just added).
     if len(d) < off + prg_size + chr_size:
         raise ValueError(f"{path}: header declares {prg_size + chr_size} bytes of PRG+CHR "
                           f"starting at offset {off}, but the file is only {len(d)} bytes")

@@ -20,6 +20,7 @@ reach 16KB. The same tools also rebuild the cartridge as a Famicom Disk System i
 | NROM 8KB | V3.0 | `8182 BYTES FREE` | 5 PRG bytes + 1 header byte |
 | MMC5 16KB | V3.0 | `16374 BYTES FREE` | MMC5 conversion + relocating the interpreter |
 | Disk BASIC | V2.1A or V3.0 | 8,126 / 8,182 bytes | rebuilt as an FDS image; CHR becomes RAM and the FDS sound channel is reachable |
+| VRC7 | V3.0 | `8182 BYTES FREE` | put on the VRC7 mapper; **FM sound answers `POKE`**, and the area stays 8KB |
 
 There is nothing between 8KB and 16KB: RAM is mapped in 8KB units, so 12KB is not an
 option. The disk build is not the roomiest: choose it to save to disk, to rewrite
@@ -38,6 +39,9 @@ characters while a program runs, or to reach the FDS sound channel.
 
 # a disk
 ./tools/fb-fds.py "Family BASIC V3 (Japan).nes" --bios disksys.rom -o fcbasic3.fds
+
+# FM sound (V3 only; 8KB, not 16KB - the FM ports are inside what 16KB turns into RAM)
+./tools/fb-vrc7.py "V3 (8KB).nes" -o "Family BASIC V3.0 (VRC7).nes"
 ```
 
 Each tool verifies its input before doing anything and refuses a dump it does not
@@ -61,6 +65,7 @@ getting these wrong breaks quietly:
 - [sav-format.md](docs/reference/sav-format.md) — how a BASIC program is stored
 - [token-numbering.md](docs/reference/token-numbering.md) — the rules for adding a keyword
 - [mmc5-wram-banks.md](docs/reference/mmc5-wram-banks.md) — why an MMC5 bank number cannot be hard-coded, and what it corrupts if you do
+- [vrc7.md](docs/reference/vrc7.md) — the FM build: how to make it, the registers, and a program that plays notes
 
 **[docs/background/](docs/background/)** — why things are the way they are; needed for
 neither of the above:
@@ -75,6 +80,7 @@ neither of the above:
 | `tools/fb-expand-basic-area.py` | Rewrites the area-limit constants (up to 8KB; mapper unchanged) |
 | `tools/fb-relocate.py` | Moves V3's interpreter from `$8000-$9FFF` to `$D000` and up |
 | `tools/fb-mmc5-16k.py` | Builds the 16KB MMC5 ROM from the relocated image |
+| `tools/fb-vrc7.py` | Builds the VRC7 ROM, where `POKE &H9010`/`POKE &H9030` reach the FM sound chip |
 | `tools/fb-fds.py` | Builds the Famicom Disk System image, with disk `SAVE`/`LOAD` (V2.1A and V3) |
 | `tools/fb-fds-file.py` | Reads and writes the saved program inside a used disk image, from a PC |
 | `tools/fb-kana-layout.py` | Lays the kana out to match a JIS keyboard's keytops; the ASCII tables are left byte-identical |

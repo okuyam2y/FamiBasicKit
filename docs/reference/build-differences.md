@@ -33,14 +33,14 @@ both are on the disk build: `SAVE` and `LOAD`.
 | | NROM | MMC5 | Disk BASIC (FDS) | VRC7 |
 |---|---|---|---|---|
 | mapper | 0 | 5 | — (Famicom Disk System) | 85 |
-| base ROM | V3 (also V1/V2) | V3 | **V2.1A or V3** | undecided |
-| program area | V3 `$6000-$7FFF`, V1/V2 **`$7000-$7FFF`** | `$6000-$9FFF` | `$6000-$7FFF` | undecided |
-| area size | 8KB on V3, **4KB on V1/V2** | 16KB | 8KB | undecided |
-| `BYTES FREE` with nothing loaded | V3 `8182`, V1 `4031`, V2.1A `4030` | `16374` | `8126` from V2.1A, `8182` from V3 | undecided |
+| base ROM | V3 (also V1/V2) | V3 | **V2.1A or V3** | V3 |
+| program area | V3 `$6000-$7FFF`, V1/V2 **`$7000-$7FFF`** | `$6000-$9FFF` | `$6000-$7FFF` | `$6000-$7FFF` expanded, `$6000-$6FFF` from an unexpanded dump |
+| area size | 8KB on V3, **4KB on V1/V2** | 16KB | 8KB | 8KB, or 4KB from an unexpanded dump |
+| `BYTES FREE` with nothing loaded | V3 `8182`, V1 `4031`, V2.1A `4030` | `16374` | `8126` from V2.1A, `8182` from V3 | `8182`, expanded first |
 | `SAVE` / `LOAD` | cassette, unchanged | cassette, unchanged | **the disk** | cassette, unchanged |
-| `BGGET` / `BGPUT` buffer | **V3 only**: `$7C00-$7FFF`. V1/V2 have neither word | **`$9C00-$9FFF`** | **V3 only**: `$7C00-$7FFF`, as on the cartridge. V2.1A has neither word | undecided |
+| `BGGET` / `BGPUT` buffer | **V3 only**: `$7C00-$7FFF`. V1/V2 have neither word | **`$9C00-$9FFF`** | **V3 only**: `$7C00-$7FFF`, as on the cartridge. V2.1A has neither word | it moves with the area, as on the cartridge: `$7C00-$7FFF` expanded, **`$6C00-$6FFF`** from an unexpanded dump |
 | reachable by `POKE` | nothing extra | CHR banks, extended attributes, scanline IRQ, two extra square waves + PCM, the multiplier | **the FDS sound channel** (and CHR is RAM, so characters can be rewritten while a program runs) | **FM sound** |
-| status | done, hardware-verified | done, hardware-verified | done, hardware-verified | not started |
+| status | done, hardware-verified | done, hardware-verified | done, hardware-verified | done, hardware-verified (the FM was **listened to**; no machine here can hear it) |
 
 The area size and the `BYTES FREE` figure are **different numbers** and the table keeps
 them apart: the display subtracts the few bytes BASIC keeps for itself.
@@ -158,9 +158,16 @@ The 16KB build maps all of `$6000-$9FFF` as RAM, and the MMC5's own registers st
 reachable at `$5000-$5FFF`. [mmc5-wram-banks.md](mmc5-wram-banks.md) covers which WRAM
 bank is which, and why that has to be probed rather than assumed.
 
-## VRC7 is not built
+## VRC7: what `POKE` reaches
 
-⚠️ **A 16KB free area and VRC7's FM sound cannot coexist.** The FM registers are at
-`$9010` and `$9030`, inside the `$8000-$9FFF` that the 16KB build turns into RAM. So on a
-16KB build `POKE 36880` writes to RAM, not to the sound chip. One or the other, in
-separate ROMs — a cartridge has one mapper.
+The FM sound chip, through two ports BASIC can already write to: `POKE &H9010` selects a
+register and `POKE &H9030` writes its value. They are written in hex because V3's
+literals stop at `32767` - see [above](#integer-literals-differ-by-version).
+[vrc7.md](vrc7.md) has the build, the register map and a program that plays notes.
+
+⚠️ **A 16KB free area and VRC7's FM sound cannot coexist.** The FM registers are inside
+the `$8000-$9FFF` that the 16KB build turns into RAM. So on a 16KB build `POKE &H9010`
+writes to RAM, not to the sound chip. One or the other, in separate ROMs — a cartridge has
+one mapper. The VRC7 build's area is whatever its input had — 8KB after the expansion
+step, the same as plain mapper 0 gives V3, and V3's own 4KB from an unexpanded dump:
+**what VRC7 buys is the sound, not the room.**

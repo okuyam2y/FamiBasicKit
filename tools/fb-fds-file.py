@@ -388,11 +388,11 @@ def program_fault(f, files, lay):
     One definition, two readers - the same shape as `header_fault`, and for the same
     reason. `find_program` turns each code into a refusal and `program_note` turns it into
     a note beside the listing, and while they decided this separately the two drifted every
-    single time a rule was added: the kind (R5), two files at one address (R7), a mix of
-    kinds (R9), the save signature (R10, reintroduced within the round that fixed the
-    others). Five times, always the same shape - a rule added to one and not the other,
-    and always caught by a reviewer rather than by a test, because either branch refuses
-    for *some* reason and only the wording differs (found in review).
+    single time a rule was added: the kind, two files at one address, a mix of kinds, and the
+    save signature - that last one reintroduced while the others were being fixed. Five
+    times, always the same shape - a rule added to one and not the other, and never caught
+    by a test, because either branch refuses for *some* reason and only the wording
+    differs.
 
     So the rule is here, and the wording is theirs."""
     if f["address"] != lay.load_at:
@@ -591,8 +591,8 @@ def long_literal_note(text, tokens, lay):
         # ★ The closure is carried, not discarded. The converter distinguishes a measured
         # outcome (a closed literal past the limit raises `?IL ERROR`) from a conservative
         # one (whether an unterminated literal does has not been measured) - and this
-        # warning said "will raise" for both, presenting a guess as a measurement (found in
-        # review, by both reviewers).
+        # warning said "will raise" for both, presenting a guess as a measurement (found
+        # twice independently).
         for n, closed in found:
             if n > sav.MAX_STRING:
                 over.append((int(m.group(1)), closed))
@@ -696,8 +696,8 @@ def main():
         if args.output and args.output != "-":
             # `with`, and inside the refusal. A bare `open(...).write(...)` leaves the
             # close to the garbage collector, which swallows any error it raises - so a
-            # full disk or a failing write could be reported as success (review
-            # R11). Opening it can fail too: a path in a directory that is not there was
+            # full disk or a failing write could be reported as success.
+            # Opening it can fail too: a path in a directory that is not there was
             # a traceback, the way the input paths were.
             with open(args.output, "w") as fh:
                 fh.write(text)
@@ -807,7 +807,7 @@ def main():
     # blank them), and demanding both markers keeps *most* of them from reading as a file.
     #
     # **Most, not all, and being cleverer cannot fix it.** A `REM` holds any bytes, so a
-    # program can contain a perfectly formed header - both reviewers built one - and after
+    # program can contain a perfectly formed header - two were built by hand to check - and after
     # a long program is replaced by a short one, the next long program is refused for
     # ever. Nothing distinguishes "a file somebody hid here" from "bytes that look like
     # one": they are the same bytes. The refusal stays, because losing a file is worse
@@ -876,8 +876,8 @@ def _run(fn):
     ⚠️ **And one place per tool means one.** Four `open()` calls in this file kept their
     own `except OSError` after this went in, each producing the same `path: reason` this
     does. They were harmless and they were a second copy of the rule, which is the shape
-    this project keeps finding - a reviewer read the sentence above, counted the copies,
-    and the sentence was the thing that was wrong (found in review). The copies are gone.
+    this project keeps finding - the sentence above was read, the copies counted, and the
+    sentence turned out to be the thing that was wrong. The copies are gone.
 
     ⚠️ **One place per tool, not one place** - this function is copied into each of them,
     which is the shape this project usually refuses. It is allowed here for a stated

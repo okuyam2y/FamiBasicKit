@@ -7,19 +7,22 @@
 
 ## どのビルドを作るか
 
-| | NROM 8KB | MMC5 16KB | Disk BASIC |
-|---|---|---|---|
-| 元の ROM | V3（V1/V2 は 4KB） | V3 のみ | V2.1A または V3 |
-| 空き容量 | `8182 BYTES FREE` | `16374 BYTES FREE` | V2.1A から 8,126 バイト、V3 から 8,182 バイト |
-| `SAVE` / `LOAD` | カセット | カセット | ディスク |
-| 必要な環境 | ヘッダの RAM 宣言に従う環境 | 同じ環境＋MMC5 | ディスクシステム（RAM アダプタ可） |
-| 追加で使えるもの | なし | CHR バンク、拡張属性、走査線 IRQ、矩形波 2 本と PCM、乗算器 | FDS 音源。CHR が RAM なので実行中に文字の絵を書き換えられる |
+| | NROM 8KB | MMC5 16KB | Disk BASIC | VRC7 |
+|---|---|---|---|---|
+| 元の ROM | V3（V1/V2 は 4KB） | V3 のみ | V2.1A または V3 | V3 のみ |
+| 空き容量 | `8182 BYTES FREE` | `16374 BYTES FREE` | V2.1A から 8,126 バイト、V3 から 8,182 バイト | `8182 BYTES FREE` |
+| `SAVE` / `LOAD` | カセット | カセット | ディスク | カセット |
+| 必要な環境 | ヘッダの RAM 宣言に従う環境 | 同じ環境＋MMC5 | ディスクシステム（RAM アダプタ可） | 同じ環境＋VRC7 |
+| 追加で使えるもの | なし | CHR バンク、拡張属性、走査線 IRQ、矩形波 2 本と PCM、乗算器 | FDS 音源。CHR が RAM なので実行中に文字の絵を書き換えられる | **`POKE` で鳴らせる FM 音源**（[vrc7.ja.md](../reference/vrc7.ja.md)） |
 
 空き容量が目的なら MMC5 版が最も広くなります。ディスク版を選ぶ理由は容量ではなく、
 ディスクに保存できること、CHR-RAM を書き換えられること、FDS 音源が使えることです。
 
 8KB と 16KB の中間はありません。RAM は 8KB 単位で割り当てるため、12KB という選択肢は
 存在しません。
+
+VRC7 版で増えるのは音だけで、空き容量はマッパー 0 の 8KB 版と同じです。16KB 版とは
+同時に選べません。FM 音源の窓口が、16KB 版が RAM にしている `$8000-$9FFF` の中にあるためです。
 
 ## 作り方
 
@@ -37,6 +40,9 @@ ROM は自分で用意してください。このリポジトリに ROM のデ�
 # ディスク
 ./tools/fb-fds.py "Family BASIC (Japan) (Rev 2).nes" --bios disksys.rom -o fcbasic.fds
 ./tools/fb-fds.py "Family BASIC V3 (Japan).nes"      --bios disksys.rom -o fcbasic3.fds
+
+# FM 音源（V3 のみ）。上の 8KB 版を渡す。容量は 8KB のまま
+./tools/fb-vrc7.py "V3 (8KB).nes" -o "Family BASIC V3.0 (VRC7).nes"
 ```
 
 各ツールは処理を始める前に入力を検査します。想定しているダンプでなければ、

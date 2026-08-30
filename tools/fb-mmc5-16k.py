@@ -631,7 +631,7 @@ def main():
     # so "every change to bank 5 is funnelled through one checked writer" stays true.
     # The two-value tolerance ($6C stock, $7C already 8KB-expanded) cannot be expressed
     # as a single `expect`, so it is checked here and the confirmed value handed on.
-    # **$7C is unreachable today** and reviewers have said so three times (2026-08-23/24):
+    # **$7C is unreachable today**, established three times over (2026-08-23/24):
     # fb-relocate.py pins its input to the stock V3 by SHA-256, and check_inputs() then
     # reproduces the relocation byte for byte, so nothing 8KB-expanded can arrive here.
     # Kept deliberately, for one reason: the constants either side of it - the area top

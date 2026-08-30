@@ -6,16 +6,20 @@ have one, see [disk-basic.md](disk-basic.md).*
 
 ## Which one to make
 
-| | NROM 8KB | MMC5 16KB | Disk BASIC |
-|---|---|---|---|
-| base ROM | V3 (also V1/V2, at 4KB) | V3 only | V2.1A or V3 |
-| free area | `8182 BYTES FREE` | `16374 BYTES FREE` | `8126` from V2.1A, `8182` from V3 |
-| `SAVE` / `LOAD` | cassette | cassette | **the disk** |
-| what it needs | any hardware that honours the header's RAM declaration | the same, plus MMC5 | a Famicom Disk System, or a RAM adapter |
-| what else you get | nothing | CHR banks, extended attributes, scanline IRQ, two extra square waves + PCM, the multiplier | the FDS sound channel, and CHR as RAM so characters can be rewritten while a program runs |
+| | NROM 8KB | MMC5 16KB | Disk BASIC | VRC7 |
+|---|---|---|---|---|
+| base ROM | V3 (also V1/V2, at 4KB) | V3 only | V2.1A or V3 | V3 only |
+| free area | `8182 BYTES FREE` | `16374 BYTES FREE` | `8126` from V2.1A, `8182` from V3 | `8182 BYTES FREE` |
+| `SAVE` / `LOAD` | cassette | cassette | **the disk** | cassette |
+| what it needs | any hardware that honours the header's RAM declaration | the same, plus MMC5 | a Famicom Disk System, or a RAM adapter | the same, plus VRC7 |
+| what else you get | nothing | CHR banks, extended attributes, scanline IRQ, two extra square waves + PCM, the multiplier | the FDS sound channel, and CHR as RAM so characters can be rewritten while a program runs | **FM sound from `POKE`** ([vrc7.md](../reference/vrc7.md)) |
 
 **The disk build is not the roomiest** — the MMC5 one reaches 16,374 bytes. What the disk
 buys is the medium. Choose it for that, not for space.
+
+**The VRC7 build is not roomier than plain mapper 0** — what it buys is the sound, and it
+cannot be combined with the 16KB area: the FM ports are inside the `$8000-$9FFF` the 16KB
+build turns into RAM.
 
 ⚠️ **There is nothing between 8KB and 16KB.** RAM is mapped in 8KB units, so 12KB is not
 an option.
@@ -36,6 +40,9 @@ Supply your own Family BASIC `.nes` dump; no ROM data is included here.
 # a disk
 ./tools/fb-fds.py "Family BASIC (Japan) (Rev 2).nes" --bios disksys.rom -o fcbasic.fds
 ./tools/fb-fds.py "Family BASIC V3 (Japan).nes"      --bios disksys.rom -o fcbasic3.fds
+
+# FM sound (V3 only). Feed it the 8KB build above; the area stays 8KB either way
+./tools/fb-vrc7.py "V3 (8KB).nes" -o "Family BASIC V3.0 (VRC7).nes"
 ```
 
 Each tool verifies its input before doing anything, and refuses a dump it does not
