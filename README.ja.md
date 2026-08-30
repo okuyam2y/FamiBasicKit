@@ -66,6 +66,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 - [token-numbering.ja.md](docs/reference/token-numbering.ja.md) — 命令を追加する場合の規則
 - [mmc5-wram-banks.ja.md](docs/reference/mmc5-wram-banks.ja.md) — MMC5 のバンク番号を決め打ちできない理由と、誤った場合に起きること
 - [vrc7.ja.md](docs/reference/vrc7.ja.md) — FM 音源が鳴るビルド。作り方・レジスタ・音を出すプログラム
+- [chr.ja.md](docs/reference/chr.ja.md) — 絵。タイル 512 枚の見方と差し替え方、キャラクタごとのタイル番号
 
 **[docs/background/](docs/background/)** — 背景。使用にも改造にも必須ではありません
 
@@ -85,6 +86,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 | `tools/fb-kana-layout.py` | かなの配列を JIS キーボードのキートップに合わせる。英数の打鍵は変わらない |
 | `tools/fb-reach.py` | 指定したアドレスがディスク版で実行される可能性があるかを判定する |
 | `tools/fb-basic-to-sav.py` | テキストの BASIC を `.sav` に変換する（ROM を使った自己検証つき） |
+| `tools/fb-chr.py` | タイル 512 枚（キャラクタと文字）を PNG として読み書きする。キャラクタごとのタイル番号も出す |
 | `tools/fb-disasm.py` | 再帰下降の逆アセンブラ。アドレス参照の全数調査に使う |
 | `tools/fb-gen-bigtest.py` | フリーエリアを埋める大きさのテストプログラムと期待値を生成する |
 

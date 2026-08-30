@@ -67,6 +67,7 @@ getting these wrong breaks quietly:
 - [token-numbering.md](docs/reference/token-numbering.md) — the rules for adding a keyword
 - [mmc5-wram-banks.md](docs/reference/mmc5-wram-banks.md) — why an MMC5 bank number cannot be hard-coded, and what it corrupts if you do
 - [vrc7.md](docs/reference/vrc7.md) — the FM build: how to make it, the registers, and a program that plays notes
+- [chr.md](docs/reference/chr.md) — the pictures: looking at the 512 tiles, replacing them, and which ones make up each character
 
 **[docs/background/](docs/background/)** — why things are the way they are; needed for
 neither of the above:
@@ -87,6 +88,7 @@ neither of the above:
 | `tools/fb-kana-layout.py` | Lays the kana out to match a JIS keyboard's keytops; the ASCII tables are left byte-identical |
 | `tools/fb-reach.py` | Answers "can this address ever run on the disk build?" soundly |
 | `tools/fb-basic-to-sav.py` | Text BASIC → `.sav`, with a ROM-driven self-test |
+| `tools/fb-chr.py` | Reads and replaces the 512 tiles — sprites and font — as a PNG, and says which tiles each character is drawn from |
 | `tools/fb-disasm.py` | Recursive-descent disassembler; used to enumerate every address reference |
 | `tools/fb-gen-bigtest.py` | Generates a test program large enough to fill the free area, plus its expected output |
 
