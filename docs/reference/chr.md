@@ -59,6 +59,93 @@ is all you want.)
 `541f9769bd5c0243c29d7a2f5d72c177` for the 16KB build and the rest — are **for stock art**.
 A build with new tiles is supposed to differ from them.
 
+## Changing the art while the program runs
+
+`--apply` changes the picture in the file, and after that nothing can change it: the
+machine reads its tiles out of ROM. A program that wants pictures of its own - a board
+game drawing its pieces, a title screen with its own lettering - needs the tiles in RAM.
+
+⚠️ **Of the builds here, only the disk build has them there.** The Famicom Disk System has
+8KB of character RAM and the disk loads the picture into it at boot. So the warning above
+cuts both ways: the disk build is the one with nothing in the file to edit, and the one
+whose picture can be replaced *while BASIC is up*.
+
+    $ ./tools/fb-chr.py "Family BASIC V3 (Japan).nes" --sheet tiles.png
+    ... edit tiles.png ...
+    $ ./tools/fb-pcg.py "Family BASIC V3 (Japan).nes" tiles.png -o pcg.bas
+
+`fb-pcg.py` compares the sheet against the ROM's tiles and writes a **BASIC program** that
+installs the ones that differ. Every tile that still matches is left out, so the program is
+as short as the edit is small.
+
+Nothing in it is a new instruction or a patched ROM. Family BASIC already has both doors:
+`POKE` puts a short 6502 routine into the top of the free area, `CLEAR` keeps BASIC out of that
+page, and `CALL` jumps to them. The routine turns NMI off, waits for vblank, points the PPU
+at one tile, writes sixteen bytes, puts the scroll back where it can, and turns NMI on
+again. Sixteen bytes fit inside vblank with room to spare, so rendering is never switched
+off.
+
+⚠️ **Putting the scroll back is not tidiness.** On this machine the register that addresses
+video memory *is* the scroll register, and BASIC does not rewrite the scroll every frame -
+only when it next draws something. Without the restore the picture sits displaced until
+then: measured under an emulator at nineteen per cent of the screen for ten frames, ending
+the moment BASIC printed. The routine reads the scroll back out of BASIC's own copy, so it
+comes back to where BASIC left it rather than to zero.
+
+⚠️ **From a V3 dump only.** Putting it back means knowing which byte BASIC keeps it in, and
+that has been established for V3 alone. A disk built from V2.1A was driven with V3's
+addresses and stayed displaced by a fifth of the screen - the addresses are somewhere else
+there - so a program made from a V2 dump is emitted **without** the restore and the tool
+says so when it does that. The picture is then displaced until BASIC next draws, which is
+what happens with no restore at all; what it never does is write a byte nobody has checked
+into the PPU. Measuring where the V2 series keeps its vertical scroll is what would end
+this.
+
+On the NROM, MMC5 and VRC7 builds the same program runs to the end, prints nothing wrong,
+and **the picture does not change**. Writes to character ROM are dropped by the board, not
+refused, so there is no error to see.
+
+### What it costs
+
+A tile is eighteen numbers in a `DATA` statement - where it goes, as two, and then its
+sixteen bytes.
+The tool tokenises what it wrote with the ROM's own reserved-word table **and that
+version's own rule for single digits** (V3 keeps 0-9 in one byte, the V2 series spends
+three), reports how many bytes BASIC stores it in, and refuses rather than emitting a
+program that will not fit. What is usable is not the whole free area: two things come off
+it. Line 10 hands the top page to the routine, and the program's own variables are
+allocated after it - one that only just fits answers `?OM ERROR` at its first assignment and
+installs nothing. What the variables cost was asked of the machine with `FRE`, not guessed.
+
+    3 tile(s) differ from Family BASIC V3 (Japan).nes: $00, $14B, $14F
+      routine at $7F00, tile buffer $7F40, CLEAR $7EFF
+      N lines / N bytes as V3 stores it (N left of N: N free, less what CLEAR takes
+      back and what the program's own variables need)
+
+⚠️ **The figures are the tool's, not this page's.** They move whenever the routine or the
+free area does, and a page that repeats them is a page that goes quietly wrong - which it
+did, twice, while this tool was being reviewed. Run it and read what it says.
+
+What the free area starts from is worth knowing, because it is the machine's own number and
+does not move: an area ending at `$7FFF` is `8182 BYTES FREE` on a disk built from V3 and
+`8126` on one built from V2.1A. The default follows `--top` as well as the version - a
+smaller area gives a smaller figure - and `--area` overrides it for a layout whose program
+starts somewhere else.
+
+Before writing anything it reads its own program back and runs it on a model of the 6502,
+so a number dropped from a `DATA` line or a tile aimed at the wrong address stops the tool
+instead of becoming a program that runs and draws the wrong picture. Driven under an
+emulator on 2026-08-31 against a disk built from V3: after the program runs, all 8,192
+bytes of character RAM are the edited sheet, the screen draws the new letter, and BASIC
+carries on.
+
+⚠️ **`--top` takes a free area that ends below `$8000` and on a page boundary** - the last
+address has to be `$xxFF`. Below `$8000` because Family BASIC's numbers are 16-bit signed,
+so `&H8000` and up are negative and what `POKE` does with one has not been measured here;
+on a page boundary because the routine takes the whole top page. That covers the disk
+build's `$7FFF`; the 16KB MMC5 area reaching `$9FFF` is out until the first has been
+measured.
+
 ## Which tiles are which character
 
 `SPRITE(c, ...)` takes a character number 0–15. Each character is drawn as a 2×2 block of

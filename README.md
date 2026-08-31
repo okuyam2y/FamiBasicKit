@@ -89,6 +89,7 @@ neither of the above:
 | `tools/fb-reach.py` | Answers "can this address ever run on the disk build?" soundly |
 | `tools/fb-basic-to-sav.py` | Text BASIC → `.sav`, with a ROM-driven self-test |
 | `tools/fb-chr.py` | Reads and replaces the 512 tiles — sprites and font — as a PNG, and says which tiles each character is drawn from |
+| `tools/fb-pcg.py` | Turns an edited tile sheet into a BASIC program that installs it **while BASIC is running** — needs a build whose tiles are in RAM, which is the disk one |
 | `tools/fb-disasm.py` | Recursive-descent disassembler; used to enumerate every address reference |
 | `tools/fb-gen-bigtest.py` | Generates a test program large enough to fill the free area, plus its expected output |
 
