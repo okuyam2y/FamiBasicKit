@@ -39,8 +39,8 @@ both are on the disk build: `SAVE` and `LOAD`.
 | `BYTES FREE` with nothing loaded | V3 `8182`, V1 `4031`, V2.1A `4030` | `16374` | `8126` from V2.1A, `8182` from V3 | `8182`, expanded first |
 | `SAVE` / `LOAD` | cassette, unchanged | cassette, unchanged | **the disk** | cassette, unchanged |
 | `BGGET` / `BGPUT` buffer | **V3 only**: `$7C00-$7FFF`. V1/V2 have neither word | **`$9C00-$9FFF`** | **V3 only**: `$7C00-$7FFF`, as on the cartridge. V2.1A has neither word | it moves with the area, as on the cartridge: `$7C00-$7FFF` expanded, **`$6C00-$6FFF`** from an unexpanded dump |
-| reachable by `POKE` | nothing extra | CHR banks, extended attributes, scanline IRQ, two extra square waves + PCM, the multiplier | **the FDS sound channel** (and CHR is RAM, so characters can be rewritten while a program runs) | **FM sound** |
-| status | done, hardware-verified | done, hardware-verified | done, hardware-verified | done, hardware-verified (the FM was **listened to**; no machine here can hear it) |
+| reachable by `POKE` | nothing extra | CHR banks, extended attributes, scanline IRQ, two extra square waves + PCM, the multiplier. **With `--chr-ram`, the characters as well**: that build declares CHR-RAM, carries the picture in a spare PRG bank and copies it out at power-on, so a running program can rewrite it | **the FDS sound channel** (and CHR is RAM, so characters can be rewritten while a program runs) | **FM sound** |
+| status | done, hardware-verified | done, hardware-verified (`--chr-ram`: emulator, MiSTer, and a Famicom through an EverDrive N8 PRO - but **no MMC5 cartridge ever had character RAM**, so any other machine is untried and it is never the default) | done, hardware-verified | done, hardware-verified (the FM was **listened to**; no machine here can hear it) |
 
 The area size and the `BYTES FREE` figure are **different numbers** and the table keeps
 them apart: the display subtracts the few bytes BASIC keeps for itself.

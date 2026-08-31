@@ -65,10 +65,17 @@ A build with new tiles is supposed to differ from them.
 machine reads its tiles out of ROM. A program that wants pictures of its own - a board
 game drawing its pieces, a title screen with its own lettering - needs the tiles in RAM.
 
-⚠️ **Of the builds here, only the disk build has them there.** The Famicom Disk System has
-8KB of character RAM and the disk loads the picture into it at boot. So the warning above
-cuts both ways: the disk build is the one with nothing in the file to edit, and the one
-whose picture can be replaced *while BASIC is up*.
+⚠️ **Two of the builds here have them there**, and both of them keep nothing to edit in the
+file:
+
+* the **disk build**. The Famicom Disk System has 8KB of character RAM and the disk loads
+  the picture into it at boot.
+* the **16KB MMC5 build made with `--chr-ram`** (`./tools/fb-mmc5-16k.py ... --chr-ram`).
+  That ROM declares character RAM instead of character ROM, carries the picture in a spare
+  PRG bank, and copies it out at power-on.
+
+So the warning above cuts both ways: these are the builds with nothing in the file to edit,
+and the ones whose picture can be replaced *while BASIC is up*.
 
     $ ./tools/fb-chr.py "Family BASIC V3 (Japan).nes" --sheet tiles.png
     ... edit tiles.png ...
@@ -101,9 +108,15 @@ what happens with no restore at all; what it never does is write a byte nobody h
 into the PPU. Measuring where the V2 series keeps its vertical scroll is what would end
 this.
 
-On the NROM, MMC5 and VRC7 builds the same program runs to the end, prints nothing wrong,
-and **the picture does not change**. Writes to character ROM are dropped by the board, not
-refused, so there is no error to see.
+On the NROM, the ordinary MMC5 and the VRC7 builds the same program runs to the end, prints
+nothing wrong, and **the picture does not change**. Writes to character ROM are dropped by
+the board, not refused, so there is no error to see.
+
+⚠️ **The `--chr-ram` build is not the default, and that is deliberate.** It has been seen to
+work under an emulator, on a MiSTer, and on a Famicom through an EverDrive N8 PRO - but no
+MMC5 cartridge was ever made with character RAM, so any other machine is untried. Where the
+declaration is not honoured there is no picture at all - not a wrong picture, a screen of
+noise - so it is a separate ROM you ask for rather than the one you get.
 
 ### What it costs
 
@@ -117,8 +130,17 @@ it. Line 10 hands the top page to the routine, and the program's own variables a
 allocated after it - one that only just fits answers `?OM ERROR` at its first assignment and
 installs nothing. What the variables cost was asked of the machine with `FRE`, not guessed.
 
+⚠️ **On a V3 build a kilobyte comes off as well.** `BGGET` and `BGPUT` share a 1KB screen
+buffer that sits at the top of the free area, which is where the routine used to go.
+Measured on a 16KB build with the routine in the top page: typing `BGGET` answered `OK` and
+left 55 of the routine's first 64 bytes overwritten with screen data - no error, no
+warning, and the next `CALL` runs whatever was on the screen. So the routine goes
+underneath that kilobyte and `CLEAR` gives back 1,280 bytes rather than 256. The V2 series
+has neither command and gives up only the page.
+
     3 tile(s) differ from Family BASIC V3 (Japan).nes: $00, $14B, $14F
-      routine at $7F00, tile buffer $7F40, CLEAR $7EFF
+      routine at $7B00, tile buffer $7B40, CLEAR $7AFF
+      $7C00-$7FFF left alone: BGGET/BGPUT write their screen buffer there
       N lines / N bytes as V3 stores it (N left of N: N free, less what CLEAR takes
       back and what the program's own variables need)
 
@@ -137,14 +159,25 @@ so a number dropped from a `DATA` line or a tile aimed at the wrong address stop
 instead of becoming a program that runs and draws the wrong picture. Driven under an
 emulator on 2026-08-31 against a disk built from V3: after the program runs, all 8,192
 bytes of character RAM are the edited sheet, the screen draws the new letter, and BASIC
-carries on.
+carries on. The same day, on a `--chr-ram` cartridge build: the machine came up with the
+dump's own 8,192 bytes in character RAM, the program replaced the tile it was given, and
+`BGGET` afterwards left the routine untouched. And on a Famicom, with the same build on an
+EverDrive N8 PRO and the program loaded from tape: every `O` on the screen became the shape
+the sheet asked for **while the digit `0` did not** - two tiles that look alike, and only
+the edited one changed.
 
-⚠️ **`--top` takes a free area that ends below `$8000` and on a page boundary** - the last
-address has to be `$xxFF`. Below `$8000` because Family BASIC's numbers are 16-bit signed,
-so `&H8000` and up are negative and what `POKE` does with one has not been measured here;
-on a page boundary because the routine takes the whole top page. That covers the disk
-build's `$7FFF`; the 16KB MMC5 area reaching `$9FFF` is out until the first has been
-measured.
+The 16KB build's free area runs past `$8000`, where Family BASIC's numbers are negative -
+16-bit signed. That was measured rather than assumed: `POKE &H9B00,123` reads back,
+`I=5:POKE &H9B00+I,77` reads back at `&H9B05`, `CALL` returns, `CLEAR &H9AFF` is accepted
+and `FRE(0)` afterwards is `15094` - which is what the tool's own rule says it should be -
+and `CLEAR &HA000` is where the machine answers `?IL ERROR`.
+
+    $ ./tools/fb-pcg.py "Family BASIC V3 (Japan).nes" tiles.png -o pcg.bas \
+          --top 0x9FFF --area 16374
+
+⚠️ **`--top` takes a free area that ends at or below `$9FFF` and on a page boundary** - the
+last address has to be `$xxFF`. On a page boundary because the routine takes a whole page;
+`$9FFF` because that is where the machine's own ceiling is (`CLEAR &HA000` is `?IL ERROR`).
 
 ## Which tiles are which character
 

@@ -81,7 +81,7 @@ neither of the above:
 |---|---|
 | `tools/fb-expand-basic-area.py` | Rewrites the area-limit constants (up to 8KB; mapper unchanged) |
 | `tools/fb-relocate.py` | Moves V3's interpreter from `$8000-$9FFF` to `$D000` and up |
-| `tools/fb-mmc5-16k.py` | Builds the 16KB MMC5 ROM from the relocated image |
+| `tools/fb-mmc5-16k.py` | Builds the 16KB MMC5 ROM from the relocated image; `--chr-ram` builds a variant whose tiles live in RAM (see `fb-pcg.py`) |
 | `tools/fb-vrc7.py` | Builds the VRC7 ROM, where `POKE &H9010`/`POKE &H9030` reach the FM sound chip |
 | `tools/fb-fds.py` | Builds the Famicom Disk System image, with disk `SAVE`/`LOAD` (V2.1A and V3) |
 | `tools/fb-fds-file.py` | Reads and writes the saved program inside a used disk image, from a PC |
@@ -89,7 +89,7 @@ neither of the above:
 | `tools/fb-reach.py` | Answers "can this address ever run on the disk build?" soundly |
 | `tools/fb-basic-to-sav.py` | Text BASIC → `.sav`, with a ROM-driven self-test |
 | `tools/fb-chr.py` | Reads and replaces the 512 tiles — sprites and font — as a PNG, and says which tiles each character is drawn from |
-| `tools/fb-pcg.py` | Turns an edited tile sheet into a BASIC program that installs it **while BASIC is running** — needs a build whose tiles are in RAM, which is the disk one |
+| `tools/fb-pcg.py` | Turns an edited tile sheet into a BASIC program that installs it **while BASIC is running** — needs a build whose tiles are in RAM: the disk one, or a 16KB MMC5 one built with `--chr-ram` |
 | `tools/fb-disasm.py` | Recursive-descent disassembler; used to enumerate every address reference |
 | `tools/fb-gen-bigtest.py` | Generates a test program large enough to fill the free area, plus its expected output |
 
@@ -119,7 +119,8 @@ went through a RAM adapter.
 - **Makimura Seisakusho, "MMC5 BASIC v0.9β2"** — got to 16KB first (PRG 128KB, CHR RAM 8KB).
   **The distribution site is gone**; only
   [the description page survives on archive.org](https://web.archive.org/web/20221116224414/http://rdev.php.xdomain.jp/makimura/archive/family-basic/mmc5-basic).
-  This project fits in PRG 64KB, keeps CHR as ROM, and keeps all four built-in programs
+  This project fits in PRG 64KB, keeps CHR as ROM by default (`--chr-ram` is the opt-in
+  variant that does not), and keeps all four built-in programs
 - **"ファミベの改造" (nigaMSX)** `http://niga2.sytes.net/msx/famibe.html` — independently
   documents that patching `$8570` in V2.1A from `$77` to `$7F` yields `4030 BYTES FREE`,
   matching what was derived here

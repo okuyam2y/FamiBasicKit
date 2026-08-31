@@ -78,6 +78,14 @@ NORMAL_C_BANK = 6
 RESIDENT_A_BANK = 5
 RESIDENT_E_BANK = 7
 
+# --- --chr-ram: where the picture goes when it is not in the file --------------
+# Bank 4 is the one bank nothing uses (it is `$FF` filled in the normal build) and 8KB is
+# exactly the size of the picture, so nothing has to move to make room.
+CHR_SRC_BANK = 4
+CHR_WINDOW = 0xC000          # the `$5116` window the bank is mapped into while copying
+CHR_PTR = 0x00               # zero-page pair used as the source pointer; saved and restored
+CHR_RAM_SHIFT = 7            # NES 2.0 header byte 11: 64 << 7 = 8192
+
 # --- Bank number that puts a second WRAM block at $8000-$9FFF ------------------
 # **The right answer differs between machines.** In an MMC5 bank number, bit 2 doubles as
 # both "A15" and "which RAM chip's /CE" (NESdev wiki), so its meaning depends on the board:
@@ -116,6 +124,9 @@ class Asm:
         # Added to probe the WRAM bank number at boot (see the probe below)
         ("CMP", "imm"): 0xC9, ("BEQ", "rel"): 0xF0,
         ("PHA", "imp"): 0x48, ("PLA", "imp"): 0x68,
+        # Added to load character RAM at boot (--chr-ram; see emit_chr_load)
+        ("BIT", "abs"): 0x2C, ("BPL", "rel"): 0x10,
+        ("LDX", "imm"): 0xA2, ("DEX", "imp"): 0xCA,
     }
 
     def __init__(self, org):
@@ -312,8 +323,14 @@ WRAM_MODELS = {
 }
 
 
-def simulate_init(init, model):
+def simulate_init(init, model, prg_banks=None):
     """**Actually execute** the assembled init code and confirm the probe does its job.
+
+    With `prg_banks` (a `--chr-ram` build) it confirms the other half as well: that running
+    the init leaves **the whole picture** in character RAM. That check is the reason the
+    model has a PPU at all - `tests/` needs an emulator to see a screen, but this runs on
+    every build, so a `--chr-ram` ROM cannot be written unless its own init put all 8,192
+    bytes where they belong.
 
     Only two machines are available here, and one of them (a real ETROM) is not on hand.
     So it runs on a model whose reading of bank numbers can be swapped out.
@@ -335,8 +352,118 @@ def simulate_init(init, model):
     for i, blk in blocks.items():
         blk[PROBE_LO - 0x6000] = 0x40 + i      # a pre-existing value (hot-start case)
     regs, sp, stack = {}, 0xFD, bytearray(0x100)
-    a, zflag, pc = 0, False, init.org
+    a, x, y, zflag, nflag, pc = 0, 0, 0, False, False, init.org
     code = init.code
+    # Zero page as a hot start leaves it: **not zero**, so a routine that fails to save and
+    # restore what it borrows is caught rather than flattered by an all-zero page
+    zp = bytearray((0x5A + i) & 0xFF for i in range(0x100))
+    zp_before = bytes(zp)
+    steps = 0
+
+    # --- The PPU, only as far as this code touches it -------------------------
+    # Modelled from the NESdev wiki's "PPU power up state": `$2000`, `$2001` and `$2006` are
+    # **ignored** until the machine has warmed up, while `$2007` works from the start. The
+    # warm-up is counted in vblanks seen rather than cycles (the two-loop wait that page
+    # calls best practice is exactly what the init does), so leaving the wait out means the
+    # address writes are dropped and the picture lands at the address the PPU powered up
+    # with - which is what `POWER_ON_VRAM_ADDR` stands in for.
+    POWER_ON_VRAM_ADDR = 0x0AB1
+    VBLANK_EVERY = 20                     # model steps; only has to be more than one read
+    chr_ram = bytearray(0x2000)
+    # ⚠️ **The flag reset leaves behind is not a vblank.** NESdev: after a quick power
+    # cycle `PPUSTATUS` comes up with bit 7 already set, which is why the canonical wait
+    # reads `$2002` once to throw it away *before* the two loops. Modelling that first read
+    # as a vblank would make **one** loop enough here while the machine needs two (the
+    # first real vblank is at about 27,384 cycles and the writes start taking at 29,658).
+    # ⚠️ **The model starts in the state a warm reset leaves behind**: NMI enabled and
+    # rendering on. A Famicom reset does not reset the PPU, so `$2000` and `$2001` keep
+    # whatever BASIC left in them, and that is the case the init has to survive. Modelling
+    # only the cold start is what let two separate warm-start guards go untested, one after
+    # the other; this is the shape that covers both.
+    # ★ The warm-up "writes are ignored" rule does **not** gate these bits, and that is
+    # deliberate: that rule is a property of the PPU having been *reset*, and the scenario
+    # this models is the one where it was not. The latch behaviour below stays gated.
+    # ⚠️ Gating the address step by warm-up instead would make this model **reject ROMs that
+    # work**: the NESdev power-up table gives PPUCTRL as `0000 0000` both at power and after
+    # reset, so a cold machine steps by one whether or not anyone writes `$2000`. (Asked
+    # twice in review; the answer is in the imported table, not in the argument.)
+    # `inc` is **unknown** until the routine writes `$2000`: on a warm start it holds
+    # whatever BASIC left, so a routine that streams 8KB without setting it is relying on
+    # something it did not establish.
+    ppu = {"addr": POWER_ON_VRAM_ADDR, "latch": None, "stale": True, "vbl_at": VBLANK_EVERY,
+           "vbl_seen": 0, "nmi": True, "rendering": True, "inc": None}
+
+    def ppu_warm():
+        return ppu["vbl_seen"] >= 2
+
+    def ppu_read_status():
+        if ppu["stale"]:
+            ppu["stale"] = False
+            return 0x80
+        set_now = steps >= ppu["vbl_at"]
+        if set_now:
+            ppu["vbl_seen"] += 1
+            ppu["vbl_at"] = steps + VBLANK_EVERY
+        return 0x80 if set_now else 0x00
+
+    def ppu_write(addr, v):
+        if addr == 0x2006:
+            if not ppu_warm():
+                return                    # dropped, and the latch does not toggle either
+            if ppu["latch"] is None:
+                ppu["latch"] = v
+            else:
+                ppu["addr"] = ((ppu["latch"] << 8) | v) & 0x3FFF
+                ppu["latch"] = None
+        elif addr == 0x2007:
+            # ⚠️ **Not while the PPU is drawing.** A write to `$2007` during rendering does
+            # not land where the address says; the address is the rendering fetch address.
+            # On a warm start rendering is still on until the init turns it off.
+            # ★ **Everything the copy depends on is asserted here, not assumed.** Four
+            # separate reviews found the model missing one of these in turn - NMI, then
+            # rendering, then the address step, then the CHR mapping - because it stored the
+            # control registers as opaque bytes and hard-coded the behaviour the routine
+            # happened to want. They are decoded now, and a routine that has not established
+            # what it relies on is refused rather than flattered.
+            if ppu["rendering"]:
+                raise AssertionError("$2007 was written while rendering is still on - on a "
+                                     "warm start the bytes do not land where the address says")
+            if ppu["inc"] is None:
+                raise AssertionError("$2007 was written without setting the VRAM address "
+                                     "step ($2000 bit 2) - a warm start leaves it unknown")
+            if regs.get(0x5101) != 0x00:
+                raise AssertionError(f"$2007 was written with $5101 = "
+                                     f"{'unset' if 0x5101 not in regs else '$%02X' % regs[0x5101]}"
+                                     f", not 0 - only mode 0 maps one 8KB bank across both "
+                                     f"pattern tables")
+            for reg in (0x5127, 0x512B):
+                if regs.get(reg) not in (0x00, None) or reg not in regs:
+                    raise AssertionError(f"$2007 was written with ${reg:04X} = "
+                                         f"{'unset' if reg not in regs else '$%02X' % regs[reg]}"
+                                         f", not bank 0")
+            if ppu["addr"] < 0x2000:
+                chr_ram[ppu["addr"]] = v
+            ppu["addr"] = (ppu["addr"] + ppu["inc"]) & 0x3FFF
+        elif addr in (0x2000, 0x2001):
+            if addr == 0x2000:
+                # ⚠️ **Both directions of the same invariant.** Refusing to move the bank
+                # while NMI is on is only half of it: NMI must stay off for the *whole*
+                # time the picture is standing where the handler lives, and that is about
+                # six frames: two waiting for the PPU and roughly four copying (8,192 bytes
+                # at fourteen cycles each is 115,000, and an NTSC frame is 29,780).
+                # Turning it back on in the middle is the same hazard.
+                if v & 0x80 and (regs.get(0x5116, 0xFF) & 0x7F) != NORMAL_C_BANK:
+                    raise AssertionError(
+                        "NMI was re-enabled while $5116 still maps a bank other than the "
+                        "normal one - the handler is not there yet")
+                ppu["nmi"] = bool(v & 0x80)      # see the note where `nmi` is initialised
+                ppu["inc"] = 32 if v & 0x04 else 1         # VRAM address step
+            if addr == 0x2001:
+                ppu["rendering"] = bool(v & 0x18)          # background or sprites enabled
+            if ppu_warm():
+                regs[addr] = v
+        else:
+            raise AssertionError(f"${addr:04X}: the model does not know this PPU register")
 
     def block_at(cpu_addr):
         if 0x6000 <= cpu_addr < 0x8000:
@@ -348,35 +475,92 @@ def simulate_init(init, model):
             raise AssertionError(f"${cpu_addr:04X} was touched but $5114 is not set to RAM")
         return blocks[to_block(v)], cpu_addr - 0x8000
 
-    for _ in range(500):
+    def read8(addr):
+        if addr < 0x100:
+            return zp[addr]
+        if 0x2000 <= addr < 0x2008:
+            if addr != 0x2002:
+                raise AssertionError(f"${addr:04X}: the model only answers reads of $2002")
+            return ppu_read_status()
+        if CHR_WINDOW <= addr < CHR_WINDOW + BANK:
+            if prg_banks is None:
+                raise AssertionError(f"${addr:04X}: read from the bank window, but this "
+                                     f"build has no picture to carry there")
+            bank = regs.get(0x5116)
+            if bank is None or not bank & 0x80:
+                raise AssertionError(f"${addr:04X}: read while $5116 does not select ROM")
+            if (bank & 0x7F) not in prg_banks:
+                raise AssertionError(f"${addr:04X}: read while $5116 selects bank "
+                                     f"{bank & 0x7F}, which holds nothing this model knows")
+            return prg_banks[bank & 0x7F][addr - CHR_WINDOW]
+        blk, i = block_at(addr)
+        return blk[i]
+
+    def write8(addr, v):
+        if addr < 0x100:
+            zp[addr] = v
+        elif 0x2000 <= addr < 0x2008:
+            ppu_write(addr, v)
+        elif 0x5000 <= addr < 0x6000:
+            # ⚠️ **The bank under the NMI handler must not move while NMI is enabled.**
+            # `$C000-$DFFF` holds the relocated interpreter, including the NMI handler the
+            # RAM trampoline jumps to. Swapping it out with NMI live means the next vblank
+            # executes whatever is in the new bank. `build_loader` disables NMI first for
+            # this reason; the init has to as well.
+            if addr == 0x5116 and (v & 0x7F) != NORMAL_C_BANK and ppu["nmi"]:
+                raise AssertionError(
+                    f"$5116 moves the bank under the NMI handler (bank {v & 0x7F}) while "
+                    f"NMI is still enabled - a warm-start NMI would execute that bank")
+            regs[addr] = v
+        else:
+            blk, i = block_at(addr)
+            blk[i] = v
+
+    for steps in range(2_000_000):
         off = pc - init.org
         if not 0 <= off < len(code):
             raise AssertionError(f"execution left the init code (${pc:04X})")
         op = code[off]
+        imm = code[off + 1] if off + 1 < len(code) else None
+        absa = (code[off + 1] | (code[off + 2] << 8)) if off + 2 < len(code) else None
         if op == 0x78:                                        # SEI
             pc += 1
         elif op == 0xA9:                                      # LDA #imm
-            a = code[off + 1]; zflag = (a == 0); pc += 2
+            a = imm; zflag = (a == 0); pc += 2
+        elif op == 0xA2:                                      # LDX #imm
+            x = imm; zflag = (x == 0); pc += 2
+        elif op == 0xA0:                                      # LDY #imm
+            y = imm; zflag = (y == 0); pc += 2
+        elif op == 0xA5:                                      # LDA zp
+            a = zp[imm]; zflag = (a == 0); pc += 2
+        elif op == 0x85:                                      # STA zp
+            zp[imm] = a; pc += 2
+        elif op == 0xE6:                                      # INC zp
+            zp[imm] = (zp[imm] + 1) & 0xFF; zflag = (zp[imm] == 0); pc += 2
+        elif op == 0xB1:                                      # LDA (zp),Y
+            base = zp[imm] | (zp[(imm + 1) & 0xFF] << 8)
+            a = read8((base + y) & 0xFFFF); zflag = (a == 0); pc += 2
+        elif op == 0xC8:                                      # INY
+            y = (y + 1) & 0xFF; zflag = (y == 0); pc += 1
+        elif op == 0xCA:                                      # DEX
+            x = (x - 1) & 0xFF; zflag = (x == 0); pc += 1
         elif op == 0xAD:                                      # LDA abs
-            addr = code[off + 1] | (code[off + 2] << 8)
-            blk, i = block_at(addr); a = blk[i]; zflag = (a == 0); pc += 3
+            a = read8(absa); zflag = (a == 0); pc += 3
+        elif op == 0x2C:                                      # BIT abs
+            v = read8(absa); nflag = bool(v & 0x80); zflag = ((a & v) == 0); pc += 3
         elif op == 0x8D:                                      # STA abs
-            addr = code[off + 1] | (code[off + 2] << 8)
-            if 0x5000 <= addr < 0x6000:
-                regs[addr] = a
-            else:
-                blk, i = block_at(addr); blk[i] = a
-            pc += 3
+            write8(absa, a); pc += 3
         elif op == 0x48:                                      # PHA
             stack[sp] = a; sp = (sp - 1) & 0xFF; pc += 1
         elif op == 0x68:                                      # PLA
             sp = (sp + 1) & 0xFF; a = stack[sp]; zflag = (a == 0); pc += 1
         elif op == 0xC9:                                      # CMP #imm
-            zflag = (a == code[off + 1]); pc += 2
-        elif op == 0xF0:                                      # BEQ rel
-            d = code[off + 1]; pc += 2
-            if zflag:
-                pc += d - 256 if d >= 0x80 else d
+            zflag = (a == imm); pc += 2
+        elif op in (0xF0, 0xD0, 0x10):                        # BEQ / BNE / BPL rel
+            take = zflag if op == 0xF0 else (not zflag) if op == 0xD0 else (not nflag)
+            pc += 2
+            if take:
+                pc += imm - 256 if imm >= 0x80 else imm
         elif op == 0x4C:                                      # JMP abs (to the real reset handler)
             break
         else:
@@ -384,6 +568,24 @@ def simulate_init(init, model):
                                  f"Extend the model whenever the init code grows")
     else:
         raise AssertionError("the init code never terminated")
+
+    if bytes(zp) != zp_before:
+        differ = [i for i in range(0x100) if zp[i] != zp_before[i]]
+        raise AssertionError(f"[{model}] the zero page was left changed at "
+                             f"{', '.join('$%02X' % i for i in differ[:8])} - a hot start "
+                             f"has BASIC's state there")
+    if prg_banks is not None:
+        want = prg_banks[CHR_SRC_BANK]
+        same = sum(p == q for p, q in zip(chr_ram, want))
+        if same != len(want):
+            raise AssertionError(f"[{model}] character RAM holds {same}/{len(want)} of the "
+                                 f"picture after the init "
+                                 f"(PPU address ended at ${ppu['addr']:04X})")
+        back = regs.get(0x5116)
+        if back != (0x80 | NORMAL_C_BANK):
+            raise AssertionError(f"[{model}] $5116 was left at "
+                                 f"{'unset' if back is None else '$%02X' % back}, not the "
+                                 f"normal bank (${0x80 | NORMAL_C_BANK:02X})")
 
     got = regs.get(0x5114)
     if got is None or got & 0x80:
@@ -421,7 +623,79 @@ def simulate_init(init, model):
     return got, separated
 
 
-def build_init(mirror_value, reset_addr):
+def emit_chr_load(a):
+    """`--chr-ram` only: put the picture in front of the PPU at power-on.
+
+    A `--chr-ram` build declares character RAM instead of character ROM, so **the file has
+    no picture in it**. Nothing draws until this runs: the eight kilobytes are carried in
+    the spare PRG bank and written through `$2007` here.
+
+    ★ **Where this sits is what makes it small.** It is the tail of the init, so
+    `$5101` (CHR mode 0, one 8KB bank) has already been written by the register list above
+    and the reset vector already points at the init. Neither is repeated.
+    ⚠️ An earlier prototype ran **before** the init - it was reached by pointing the reset
+    vector at itself - and wrote all 8,192 bytes into nothing, because `$5101` was still
+    whatever the machine powered up with.
+
+    WARNING: **the PPU ignores `$2000`, `$2001` and `$2006` for about 29,658 CPU cycles
+    after reset** (NESdev wiki, "PPU power up state"; `$2007` itself works immediately).
+    A version without the wait therefore writes 8,192 bytes that go wherever the PPU's
+    address happened to be. The two-loop wait below is the form that page gives.
+
+    WARNING: **on a Famicom the reset button does not reset the PPU** (same source), so on
+    a hot start rendering can still be on. `$2001` is cleared after the wait, which covers
+    both starts: a PPU that *was* reset has rendering off already, and one that was not
+    takes the write. (Writing it before the wait is not wrong - a PPU that was not reset
+    accepts that too - it is simply not the write that matters.)
+
+    WARNING: **on a hot start the zero page holds BASIC's state.** The two bytes used as
+    the source pointer are pushed and pulled back, the way `emit_probe` handles the two
+    WRAM bytes it needs.
+    """
+    # ⚠️ **NMI is already off when this runs** - `build_init` turns it off at the very top,
+    # before any bank moves, because the swap below puts the picture where the NMI handler
+    # lives. The `$2000` write after the wait below is a different one: it settles the VRAM
+    # increment on a cold start, where the early write was ignored.
+    a.emit("LDA", "zp", CHR_PTR, "save the zero-page pair used as the source pointer")
+    a.emit("PHA", "imp")
+    a.emit("LDA", "zp", CHR_PTR + 1)
+    a.emit("PHA", "imp")
+    a.emit("LDA", "imm", 0x80 | CHR_SRC_BANK, f"bank {CHR_SRC_BANK} (the picture) -> ${CHR_WINDOW:04X}")
+    a.emit("STA", "abs", 0x5116)
+    a.emit("BIT", "abs", 0x2002, "clear the vblank flag if reset left it set")
+    w1 = a.label("chr_vwait1")
+    a.emit("BIT", "abs", 0x2002)
+    a.emit("BPL", "rel", w1, "first vblank")
+    w2 = a.label("chr_vwait2")
+    a.emit("BIT", "abs", 0x2002)
+    a.emit("BPL", "rel", w2, "second: only now do $2000/$2001/$2006 take")
+    a.emit("LDA", "imm", 0x00)
+    a.emit("STA", "abs", 0x2001, "rendering off (a Famicom reset leaves the PPU running)")
+    a.emit("STA", "abs", 0x2000, "NMI off, VRAM address steps by one")
+    a.emit("STA", "abs", 0x2006, "PPU address $0000")
+    a.emit("STA", "abs", 0x2006)
+    a.emit("STA", "zp", CHR_PTR, f"source = ${CHR_WINDOW:04X}")
+    a.emit("LDA", "imm", CHR_WINDOW >> 8)
+    a.emit("STA", "zp", CHR_PTR + 1)
+    a.emit("LDX", "imm", BANK >> 8, f"{BANK >> 8} pages = {BANK // 1024}KB")
+    a.emit("LDY", "imm", 0x00)
+    loop = a.label("chr_copy")
+    a.emit("LDA", "izy", CHR_PTR)
+    a.emit("STA", "abs", 0x2007)
+    a.emit("INY", "imp")
+    a.emit("BNE", "rel", loop)
+    a.emit("INC", "zp", CHR_PTR + 1)
+    a.emit("DEX", "imp")
+    a.emit("BNE", "rel", loop)
+    a.emit("LDA", "imm", 0x80 | NORMAL_C_BANK, "put the normal bank back")
+    a.emit("STA", "abs", 0x5116)
+    a.emit("PLA", "imp", None, "and the zero page")
+    a.emit("STA", "zp", CHR_PTR + 1)
+    a.emit("PLA", "imp")
+    a.emit("STA", "zp", CHR_PTR)
+
+
+def build_init(mirror_value, reset_addr, chr_ram=False):
     """Configure MMC5 at power-on, then hand over to the relocated reset handler.
 
     `$5114` (`$8000-$9FFF`) **is the one value that is not hard-coded**: the right answer
@@ -429,6 +703,18 @@ def build_init(mirror_value, reset_addr):
     """
     a = Asm(INIT_ORG)
     a.emit("SEI", "imp", note="disable interrupts (MMC5 IRQ powers up undefined)")
+    if chr_ram:
+        # ⚠️ **NMI off first, before any bank moves.** `SEI` does not stop NMI. On a warm
+        # start `$2000` can still have it enabled - a Famicom reset does not reset the PPU
+        # (NESdev wiki, "PPU power up state") - and the NMI vector goes through a RAM
+        # trampoline into `$D971`, which lives in the `$C000-$DFFF` window. Every bank this
+        # init puts there is therefore a window where an NMI would execute the wrong bytes,
+        # and `--chr-ram` widens it to about six frames - two waiting for the PPU and
+        # roughly four copying 8,192 bytes through `$2007`. `build_loader`
+        # guards the same hazard the same way. Ignored on a cold start, where NMI is
+        # already off; the `$2000` write after the warm-up is what settles the increment.
+        a.emit("LDA", "imm", 0x00)
+        a.emit("STA", "abs", 0x2000, "NMI off before anything moves (a warm reset leaves it on)")
     # The probe is meaningless before WRAM writes are enabled ($5102/$5103), so the
     # register writes are split into two lists rather than one
     before = [
@@ -463,6 +749,8 @@ def build_init(mirror_value, reset_addr):
     emit_writes(before)
     emit_probe(a)
     emit_writes(after)
+    if chr_ram:
+        emit_chr_load(a)
     a.emit("JMP", "abs", reset_addr, "to the relocated original reset handler")
     return a
 
@@ -530,6 +818,14 @@ def main():
                          "relocation is redone from --original and compared, so a "
                          "mismatch stops the build")
     ap.add_argument("--listing", action="store_true", help="print a listing of the assembled code")
+    ap.add_argument("--chr-ram", action="store_true",
+                    help="build a version whose tiles live in RAM, so a running program "
+                         "can change the picture (fb-pcg.py). The picture moves into the "
+                         "spare PRG bank and the init copies it out at power-on. "
+                         "⚠️ verified on FCEUX, on MiSTer and on a Famicom through an "
+                         "EverDrive N8 PRO. No MMC5 cartridge was ever made with character "
+                         "RAM, so anything else is untried; where the declaration is not "
+                         "honoured there is no picture at all, so this is never the default")
     args = ap.parse_args()
 
     delta = int(args.delta, 16)
@@ -556,13 +852,26 @@ def main():
         bank7[addr - 0xE000:addr - 0xE000 + len(data)] = data
 
     put7(BG_DEST, orig_prg[BG_SRC - 0x8000:BG_SRC - 0x8000 + 0x400])
-    init = build_init(mirror, reset_addr)
+    if args.chr_ram and len(chr_data) != BANK:
+        sys.exit(f"--chr-ram carries the picture in one {BANK // 1024}KB bank, but this "
+                 f"input has {len(chr_data)} bytes of it")
+    init = build_init(mirror, reset_addr, chr_ram=args.chr_ram)
     loader = build_loader(end_table, resume)
     # **Actually run** the assembled probe on models with different readings of the bank
     # number. Only two machines are available here (MiSTer and an N8 PRO); a real ETROM
     # is not on hand
+    picture = {CHR_SRC_BANK: bytes(chr_data)} if args.chr_ram else None
     for model in WRAM_MODELS:
-        got, separated = simulate_init(init, model)
+        # ⚠️ **A refusal, not a traceback.** The model raises `AssertionError`, and a tool
+        # that lets that out ends with a stack trace - which reads as "the tool broke", not
+        # "the ROM would be wrong", and which a mutation suite has to treat as a crash
+        # rather than a catch: a refusal has to be non-zero **and** carry the words
+        # **and** leave no traceback, or a suite cannot tell the two apart.
+        try:
+            got, separated = simulate_init(init, model, prg_banks=picture)
+        except AssertionError as e:
+            sys.exit(f"running the init on the [{model}] model says the ROM would be "
+                     f"wrong: {e}")
         note = "upper and lower are different RAM" if separated else \
                "no separation (8KB-only machine; BASIC will believe it has 16KB)"
         print(f"  probe check [{model}] -> $5114 = ${got:02X} / {note}")
@@ -578,6 +887,15 @@ def main():
                      f"into ${limit:04X} ({size} bytes)")
     put7(INIT_ORG, init.code)
     put7(LOADER_ORG, loader.code)
+    # ⚠️ **What was validated has to be what gets written.** Everything above checks the
+    # assembled objects; this checks the bytes that actually land in the image. Without it,
+    # anything that touched the bank between here and the write - a stray `put7`, an
+    # off-by-one placement, a later patch - produced a ROM nobody had run.
+    for name, org, code in (("init", INIT_ORG, init.code), ("loader", LOADER_ORG, loader.code)):
+        off = org - 0xE000
+        if bytes(bank7[off:off + len(code)]) != bytes(code):
+            sys.exit(f"the {name} in the image is not the {name} that was checked "
+                     f"(${org:04X}, {len(code)} bytes)")
     for a in (0xFFFC, 0xFFFE):                        # point reset/IRQ at the init code
         put7(a, bytes([INIT_ORG & 0xFF, INIT_ORG >> 8]))
 
@@ -740,7 +1058,9 @@ def main():
         chunk = orig_prg[src - 0x8000:]
         data[:min(len(chunk), 0x1000)] = chunk[:0x1000]
         banks.append(bytes(c_low) + bytes(data))
-    banks.append(b"\xFF" * BANK)                      # bank 4 (unused)
+    # Bank 4 is unused in the normal build. `--chr-ram` is what it is for: the picture is
+    # no longer in the file's CHR section, so it rides here and the init copies it out
+    banks.append(bytes(chr_data) if args.chr_ram else b"\xFF" * BANK)
     banks.append(bytes(resident_a))
     banks.append(bytes(bank6))
     banks.append(bytes(bank7))
@@ -753,7 +1073,10 @@ def main():
     header[8] = 0x00                                  # mapper high bits / submapper
     header[9] = 0x00                                  # high bits of the PRG/CHR size
     header[10] = (header[10] & 0x0F) | 0x80           # NVRAM 64<<8 = 16KB
-    out = bytes(header) + b"".join(banks) + chr_data
+    if args.chr_ram:
+        header[5] = 0x00                              # no CHR ROM in the file
+        header[11] = CHR_RAM_SHIFT                    # 64 << 7 = 8KB of CHR RAM
+    out = bytes(header) + b"".join(banks) + (b"" if args.chr_ram else chr_data)
 
     print("built the 16KB MMC5 version")
     print(f"  free area $6000-$9FFF (16,384 bytes)"
@@ -769,7 +1092,15 @@ def main():
           f" / loader ${LOADER_ORG:04X} ({len(loader.code)} bytes)"
           f" / title graphic ${BG_DEST:04X}-${BG_DEST + 0x3FF:04X}")
     print("  four built-in programs -> $D000 in banks 0-3 (swapped in via $5116)")
-    print(f"  PRG {len(banks) * BANK // 1024}KB / CHR {len(chr_data) // 1024}KB / NVRAM 16KB")
+    if args.chr_ram:
+        print(f"  picture -> PRG bank {CHR_SRC_BANK} ({len(chr_data)} bytes), copied into "
+              f"character RAM by the init")
+        print("  ⚠️ tiles in RAM: verified on FCEUX, on MiSTer, and on a Famicom through "
+              "an EverDrive N8 PRO. No MMC5 cartridge was ever made this way, so anything "
+              "else is untried - and where the declaration is not honoured, nothing draws")
+    print(f"  PRG {len(banks) * BANK // 1024}KB /"
+          f" CHR {'RAM 8KB (declared, not in the file)' if args.chr_ram else str(len(chr_data) // 1024) + 'KB'}"
+          f" / NVRAM 16KB")
 
     if args.listing:
         for a in (init, loader):

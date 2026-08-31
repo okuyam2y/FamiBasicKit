@@ -14,11 +14,16 @@ This writes a **program**. Running it replaces tiles at run time, which is the o
 program can draw with pictures it made itself - and the only way to have more than one set
 of pictures in a session.
 
-⚠️ **It needs a build whose tiles live in RAM.** Today that is the **disk build**
-(`fb-fds.py`): the FDS has 8KB of character RAM and the disk loads the tiles into it. The
-NROM, MMC5 and VRC7 builds keep their tiles in ROM, so the program runs to the end, prints
-nothing wrong, and **the picture does not change**. There is no error to see: writes to
-character ROM are dropped by the board, not refused.
+⚠️ **It needs a build whose tiles live in RAM.** Two of ours have them there:
+
+* the **disk build** (`fb-fds.py`) - the FDS has 8KB of character RAM and the disk loads
+  the tiles into it, and
+* the **16KB MMC5 build made with `fb-mmc5-16k.py --chr-ram`**, which declares character
+  RAM and copies the picture into it at power-on.
+
+On the plain NROM, MMC5 and VRC7 builds the tiles are in ROM, so the program runs to the
+end, prints nothing wrong, and **the picture does not change**. There is no error to see:
+writes to character ROM are dropped by the board, not refused.
 
 ## What the program does
 
@@ -63,6 +68,32 @@ What the reported `BYTES FREE` does not cover, and this does:
   just fits answers `?OM ERROR` at its first assignment and installs nothing. What the four
   cost was measured with `FRE` rather than guessed.
 
+## The last kilobyte of a V3 area belongs to `BGGET`
+
+`BGGET` and `BGPUT` share one 1KB screen buffer that every build here pins to the **top of
+the free area**. The routine used to be parked in the top page, which is inside it.
+Measured on a 16KB build with the routine at `$9F00`: typing `BGGET` answered `OK` and left
+55 of its first 64 bytes overwritten with screen data. Nothing refuses and nothing warns -
+the next `CALL` runs whatever was on screen. So on a V3 dump the routine goes underneath
+that kilobyte, and the program gives back 1,280 bytes rather than 256. The V2 series has
+neither command, so it gives back only the page.
+
+## Addresses at or above `$8000`
+
+Family BASIC's numbers are 16-bit **signed**, so `&H8000` and up are negative, and this
+tool used to refuse `--top` past `$8000` rather than emit arithmetic nobody had run. The
+16KB MMC5 build has its free area up there, so it was measured on one (FCEUX, 2026-08-31):
+
+    PRINT FRE(0)            -> 16374        the whole area
+    POKE &H9B00,123         -> PEEK gives 123
+    I=5:POKE &H9B00+I,77    -> PEEK(&H9B05) gives 77      the form emitted below
+    CALL &H9B00             -> comes back
+    CLEAR &H9AFF            -> OK, and FRE(0) is then 15094
+    CLEAR &HA000            -> ?IL ERROR
+
+`15094` is `free_area("v3", 0x9AFF)` to the byte, which is what says the arithmetic here
+holds above `$8000` and not just that nothing crashed.
+
 ## The self-check
 
 Before writing anything the tool **reads back the program it just emitted** and runs it:
@@ -72,10 +103,8 @@ PNG. So a mistake in the emitted text - a number dropped from a `DATA` line, a t
 addressed at the wrong place, the two bit planes swapped - stops the tool instead of
 becoming a program that runs and draws the wrong picture.
 
-This works only while the addresses it uses are below `$8000`, because Family BASIC's
-numbers are 16-bit **signed** and `&H8000` and up are negative. A build with a free area
-past `$8000` - the MMC5 16KB one - needs that measured before this can target it, and
-until then `--top` refuses it rather than emitting arithmetic nobody has run.
+The model works in the same address space the machine does, so it covers the 16KB build's
+free area past `$8000` as well (see the measurements above).
 """
 
 import argparse
@@ -105,6 +134,24 @@ CHR_SIZE = TILE_BYTES * TILE_COUNT
 # `PARAM` is where BASIC leaves the PPU address for the next tile; `BUF` is the tile.
 CODE_OFF, PARAM_OFF, BUF_OFF = 0x00, 0x3E, 0x40
 RESERVED = 0x100
+
+# ⚠️ **The last kilobyte of the area is not free on a V3 build.** `BGGET`/`BGPUT` share one
+# 1KB screen buffer, and every build here pins it to the top of whatever the area is:
+# `$6C00` stock, `$7C00` once widened to 8KB and on the disk, `$9C00` on the MMC5 16KB one.
+# The routine used to be parked in the top page, inside it.
+#
+# Measured 2026-08-31 under FCEUX on a 16KB build, with the routine at `$9F00`: typing
+# `BGGET` answered `OK` and left 55 of the routine's first 64 bytes overwritten with screen
+# data. **It does not refuse and it does not warn** - the next `CALL` runs whatever the
+# screen happened to hold. So the routine goes underneath the buffer instead.
+#
+# The V2 series has neither command and no buffer, so it gives nothing up.
+BG_BUFFER = 0x400
+
+
+def routine_ceiling(version, top):
+    """The highest address the routine may use, given where the free area ends."""
+    return top - (BG_BUFFER if version == "v3" else 0)
 
 # How wide a `DATA` line is allowed to get. BASIC accepts 251 characters; this is shorter
 # so that a line stays readable on a 32-column screen and so that a test that types the
@@ -397,9 +444,13 @@ def data_lines(numbers, first_line, step):
     return out, line
 
 
-def emit(chr_new, chr_stock, top, scroll):
-    """The BASIC source, and the tiles it carries."""
-    base = top + 1 - RESERVED
+def emit(chr_new, chr_stock, ceiling, scroll):
+    """The BASIC source, and the tiles it carries.
+
+    `ceiling` is the highest address the routine may use - `routine_ceiling()`
+    of the end of the free area, which is **not** the same thing on a V3 build.
+    """
+    base = ceiling + 1 - RESERVED
     code = routine(base, scroll)
     changed = [t for t in range(TILE_COUNT)
                if tile_data(chr_new, t) != tile_data(chr_stock, t)]
@@ -454,14 +505,14 @@ def read_data_numbers(source):
     return out
 
 
-def replay(source, chr_stock, top, scroll):
+def replay(source, chr_stock, ceiling, scroll):
     """Run the emitted program's own numbers and return the character RAM they leave.
 
     `READ` hands the numbers out in order; that is the only thing about BASIC modelled
     here. Everything else - the routine, the PPU address, the sixteen writes - actually
     runs.
     """
-    base = top + 1 - RESERVED
+    base = ceiling + 1 - RESERVED
     numbers = read_data_numbers(source)
     code_len = len(routine(base, scroll))
     if len(numbers) < code_len + 1:
@@ -521,8 +572,8 @@ def replay(source, chr_stock, top, scroll):
     return bytes(ppu.chr), installed
 
 
-def check(source, chr_new, chr_stock, top, changed, scroll):
-    got, installed = replay(source, chr_stock, top, scroll)
+def check(source, chr_new, chr_stock, ceiling, changed, scroll):
+    got, installed = replay(source, chr_stock, ceiling, scroll)
     if installed != changed:
         raise Fault(f"the program installs tiles {installed[:8]}... but the sheet changed "
                     f"{changed[:8]}...")
@@ -552,14 +603,15 @@ def rom_version(prg):
     return "v3" if m.group(1) == b"3" else "v2"
 
 
-def measure(source, prg, version, area_bytes):
+def measure(source, prg, version, area_bytes, given_back):
     """How many bytes BASIC stores the program in, and whether it fits under `CLEAR`.
 
     Two things the reported `BYTES FREE` does **not** already account for:
 
-    * **the page the program reserves for itself.** Line 10 lowers BASIC's ceiling by
-      `RESERVED` bytes so the routine is out of reach, and that page is gone from the
-      moment the program runs.
+    * **what the program reserves for itself.** Line 10 lowers BASIC's ceiling so the
+      routine is out of reach, and those bytes are gone from the moment the program runs.
+      On a V3 build that is the routine's page **and** the kilobyte `BGGET`/`BGPUT` would
+      otherwise scribble the routine over - see `BG_BUFFER`.
     * **variables.** They are allocated after the program, so a program that just fits
       still answers `?OM ERROR` when it assigns one. This program assigns four, and what
       they cost was asked of the machine rather than guessed - see `VARIABLES`.
@@ -567,10 +619,10 @@ def measure(source, prg, version, area_bytes):
     tokens = fbs.read_token_table(prg)
     stored = fbs.build_program(source, tokens,
                                small_digits=fbs.SMALL_DIGITS_BY_VERSION[version])
-    room = area_bytes - RESERVED - VARIABLES
+    room = area_bytes - given_back - VARIABLES
     if len(stored) > room:
         sys.exit(f"the program needs {len(stored)} bytes and only {room} are usable "
-                 f"({area_bytes} free, less the {RESERVED} bytes CLEAR reserves for the "
+                 f"({area_bytes} free, less the {given_back} bytes CLEAR reserves for the "
                  f"routine and the {VARIABLES} its own variables take). Change fewer tiles.")
     return len(stored), room
 
@@ -599,10 +651,10 @@ def main():
     except ValueError:
         sys.exit(f"--top {args.top!r}: not a number. Give the last address of the free "
                  f"area, as $7FFF is written here: 0x7FFF or 32767")
-    if not 0x2000 <= top < 0x8000:
-        sys.exit(f"--top ${top:04X}: this tool only emits addresses below $8000, because "
-                 f"Family BASIC's numbers are 16-bit signed and nobody here has measured "
-                 f"what POKE does with a negative one")
+    if not 0x2000 <= top < 0xA000:
+        sys.exit(f"--top ${top:04X}: the free area of every build this knows about ends "
+                 f"at or below $9FFF, and the machine refuses a ceiling of $A000 with "
+                 f"?IL ERROR")
     if (top + 1) % 0x100:
         sys.exit(f"--top ${top:04X}: the free area has to end at a page boundary")
 
@@ -615,21 +667,29 @@ def main():
     area = args.area if args.area is not None else free_area(version, top)
 
     scroll = SCROLL_BY_VERSION.get(version)
-    source, changed = emit(chr_new, chr_stock, top, scroll)
+    ceiling = routine_ceiling(version, top)
+    given_back = top - ceiling + RESERVED
+    if ceiling + 1 - RESERVED <= PROG_START[version]:
+        sys.exit(f"--top ${top:04X}: nothing is left for the routine once the "
+                 f"{given_back} bytes above ${ceiling + 1 - RESERVED:04X} are set aside")
+    source, changed = emit(chr_new, chr_stock, ceiling, scroll)
     try:
-        check(source, chr_new, chr_stock, top, changed, scroll)
+        check(source, chr_new, chr_stock, ceiling, changed, scroll)
     except Fault as e:
         sys.exit(f"refusing to write: {e}")
-    stored, room = measure(source, rom.prg, version, area)
+    stored, room = measure(source, rom.prg, version, area, given_back)
 
-    base = top + 1 - RESERVED
+    base = ceiling + 1 - RESERVED
     print(f"{len(changed)} tile(s) differ from {os.path.basename(args.rom)}: "
           f"{fbc.runs(changed)}")
     print(f"  routine at ${base:04X}, tile buffer ${base + BUF_OFF:04X}, "
           f"CLEAR ${base - 1:04X}")
+    if ceiling != top:
+        print(f"  ${ceiling + 1:04X}-${top:04X} left alone: BGGET/BGPUT write their screen "
+              f"buffer there and would overwrite the routine without saying so")
     print(f"  {len(source.splitlines())} lines / {stored} bytes as {version.upper()} "
           f"stores it ({room - stored} left of {room}: {area} free, less the "
-          f"{RESERVED} CLEAR takes back and {VARIABLES} for its own variables)")
+          f"{given_back} CLEAR takes back and {VARIABLES} for its own variables)")
     if scroll is None:
         print(f"  ⚠️ no scroll restore: where {version.upper()} keeps its vertical scroll "
               f"has not been measured, so the picture stays displaced until BASIC next "
@@ -640,8 +700,9 @@ def main():
     if args.output:
         open(args.output, "w").write(source)
         print(f"\nwrote: {args.output}")
-        print("⚠️ needs a build whose tiles are in RAM - the disk build. On the cartridge "
-              "builds it runs and changes nothing.")
+        print("⚠️ needs a build whose tiles are in RAM: the disk build, or a 16KB MMC5 "
+              "one built with fb-mmc5-16k.py --chr-ram. On the others it runs and changes "
+              "nothing.")
     else:
         sys.stdout.write("\n" + source)
 

@@ -79,7 +79,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 |---|---|
 | `tools/fb-expand-basic-area.py` | 領域の上限値を書き換える（8KB まで。マッパーは変更しない） |
 | `tools/fb-relocate.py` | V3 の BASIC 本体 `$8000-$9FFF` を `$D000` 以降へ移動する |
-| `tools/fb-mmc5-16k.py` | 移動済みの ROM から 16KB 版の MMC5 ROM を作る |
+| `tools/fb-mmc5-16k.py` | 移動済みの ROM から 16KB 版の MMC5 ROM を作る。`--chr-ram` を付けると、絵を RAM に持つ別の ROM を作る（`fb-pcg.py` 用） |
 | `tools/fb-vrc7.py` | VRC7 版の ROM を作る。`POKE &H9010`／`POKE &H9030` が FM 音源に届く |
 | `tools/fb-fds.py` | ディスクシステムのイメージを作る（ディスクの `SAVE`/`LOAD` つき。V2.1A・V3） |
 | `tools/fb-fds-file.py` | 使用済みディスクイメージ内のプログラムを PC から読み書きする |
@@ -87,7 +87,7 @@ V3 は 8KB になります。それ以上にするには BASIC 本体を `$8000-
 | `tools/fb-reach.py` | 指定したアドレスがディスク版で実行される可能性があるかを判定する |
 | `tools/fb-basic-to-sav.py` | テキストの BASIC を `.sav` に変換する（ROM を使った自己検証つき） |
 | `tools/fb-chr.py` | タイル 512 枚（キャラクタと文字）を PNG として読み書きする。キャラクタごとのタイル番号も出す |
-| `tools/fb-pcg.py` | 描き替えたタイルの PNG から、**BASIC が動いている最中に絵を差し替える**プログラムを書き出す。タイルが RAM に載っているビルド（ディスク版）が要る |
+| `tools/fb-pcg.py` | 描き替えたタイルの PNG から、**BASIC が動いている最中に絵を差し替える**プログラムを書き出す。タイルが RAM に載っているビルド（ディスク版か、`--chr-ram` で組んだ 16KB の MMC5 版）が要る |
 | `tools/fb-disasm.py` | 再帰下降の逆アセンブラ。アドレス参照の全数調査に使う |
 | `tools/fb-gen-bigtest.py` | フリーエリアを埋める大きさのテストプログラムと期待値を生成する |
 
@@ -117,7 +117,7 @@ RAM アダプタ経由です。
 - **牧村製作所「MMC5 BASIC v0.9β2」** — 16KB 化を先に実現した例です
   （PRG 128KB / CHR RAM 8KB）。配布元のサイトは消滅しており、
   [archive.org に説明ページ](https://web.archive.org/web/20221116224414/http://rdev.php.xdomain.jp/makimura/archive/family-basic/mmc5-basic)
-  だけが残っています。こちらは PRG 64KB に収め、CHR は ROM のまま、内蔵プログラム 4 本も
+  だけが残っています。こちらは PRG 64KB に収め、CHR は既定では ROM のまま（`--chr-ram` を付けたときだけ RAM）、内蔵プログラム 4 本も
   残しています
 - **「ファミベの改造」（にがMSX）** `http://niga2.sytes.net/msx/famibe.html` —
   V2.1A の `$8570` を `$77` から `$7F` に変更すると `4030 BYTES FREE` になるという記録が
