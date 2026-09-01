@@ -33,14 +33,14 @@ both are on the disk build: `SAVE` and `LOAD`.
 | | NROM | MMC5 | Disk BASIC (FDS) | VRC7 |
 |---|---|---|---|---|
 | mapper | 0 | 5 | — (Famicom Disk System) | 85 |
-| base ROM | V3 (also V1/V2) | V3 | **V2.1A or V3** | V3 |
-| program area | V3 `$6000-$7FFF`, V1/V2 **`$7000-$7FFF`** | `$6000-$9FFF` | `$6000-$7FFF` | `$6000-$7FFF` expanded, `$6000-$6FFF` from an unexpanded dump |
-| area size | 8KB on V3, **4KB on V1/V2** | 16KB | 8KB | 8KB, or 4KB from an unexpanded dump |
-| `BYTES FREE` with nothing loaded | V3 `8182`, V1 `4031`, V2.1A `4030` | `16374` | `8126` from V2.1A, `8182` from V3 | `8182`, expanded first |
+| base ROM | V3 (also V1/V2) | V3 | **V2.1A or V3** | **V2.1A or V3** |
+| program area | V3 `$6000-$7FFF`, V1/V2 **`$7000-$7FFF`** | `$6000-$9FFF` | `$6000-$7FFF` | from V3 `$6000-$7FFF` expanded, `$6000-$6FFF` from an unexpanded dump; from V2.1A **`$6000-$7FFF` with `--8k`**, the stock `$7000-$77FF` without it |
+| area size | 8KB on V3, **4KB on V1/V2** | 16KB | 8KB | from V3 8KB, or 4KB from an unexpanded dump; from V2.1A **8KB with `--8k`**, 2KB without it |
+| `BYTES FREE` with nothing loaded | V3 `8182`, V1 `4031`, V2.1A `4030` | `16374` | `8126` from V2.1A, `8182` from V3 | `8182` from V3, expanded first; from V2.1A `8126` with `--8k` and `1982` without it |
 | `SAVE` / `LOAD` | cassette, unchanged | cassette, unchanged | **the disk** | cassette, unchanged |
-| `BGGET` / `BGPUT` buffer | **V3 only**: `$7C00-$7FFF`. V1/V2 have neither word | **`$9C00-$9FFF`** | **V3 only**: `$7C00-$7FFF`, as on the cartridge. V2.1A has neither word | it moves with the area, as on the cartridge: `$7C00-$7FFF` expanded, **`$6C00-$6FFF`** from an unexpanded dump |
+| `BGGET` / `BGPUT` buffer | **V3 only**: `$7C00-$7FFF`. V1/V2 have neither word | **`$9C00-$9FFF`** | **V3 only**: `$7C00-$7FFF`, as on the cartridge. V2.1A has neither word | **V3 only**, and it moves with the area as on the cartridge: `$7C00-$7FFF` expanded, **`$6C00-$6FFF`** from an unexpanded dump. V2.1A has neither word |
 | reachable by `POKE` | nothing extra | CHR banks, extended attributes, scanline IRQ, two extra square waves + PCM, the multiplier. **With `--chr-ram`, the characters as well**: that build declares CHR-RAM, carries the picture in a spare PRG bank and copies it out at power-on, so a running program can rewrite it | **the FDS sound channel** (and CHR is RAM, so characters can be rewritten while a program runs) | **FM sound** |
-| status | done, hardware-verified | done, hardware-verified (`--chr-ram`: emulator, MiSTer, and a Famicom through an EverDrive N8 PRO - but **no MMC5 cartridge ever had character RAM**, so any other machine is untried and it is never the default) | done, hardware-verified | done, hardware-verified (the FM was **listened to**; no machine here can hear it) |
+| status | done, hardware-verified | done, hardware-verified (`--chr-ram`: emulator, MiSTer, and a Famicom through an EverDrive N8 PRO - but **no MMC5 cartridge ever had character RAM**, so any other machine is untried and it is never the default) | done, hardware-verified | done, both builds hardware-verified (the FM was **listened to**; no machine here can hear it) |
 
 The area size and the `BYTES FREE` figure are **different numbers** and the table keeps
 them apart: the display subtracts the few bytes BASIC keeps for itself.
