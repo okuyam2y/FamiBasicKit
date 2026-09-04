@@ -116,7 +116,9 @@ the board, not refused, so there is no error to see.
 work under an emulator, on a MiSTer, and on a Famicom through an EverDrive N8 PRO - but no
 MMC5 cartridge was ever made with character RAM, so any other machine is untried. Where the
 declaration is not honoured there is no picture at all - not a wrong picture, a screen of
-noise - so it is a separate ROM you ask for rather than the one you get.
+noise - so it is a separate ROM you ask for rather than the one you get. The one real MMC5
+cartridge tried here (an ETROM donor board, 2026-09-04) has a flash chip for its picture, so
+the `--chr-ram` build cannot apply to it; the plain 16KB build is what went onto that board.
 
 ### What it costs
 

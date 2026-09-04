@@ -23,6 +23,7 @@ board actually carries.
 | **Real ETROM (16KB = 2 × 8KB) / EverDrive N8 PRO** | still chip 0 = **a mirror of `$6000-$7FFF`** | chip 1 = a distinct 8KB ✅ |
 | **MiSTer NES core** | block 1 ✅ | block 4 — distinct, but outside the 32KB `.sav` (blocks 0-3) |
 | **Real EWROM (32KB, one chip)** | the second 8KB ✅ | open bus |
+| **ETROM donor board carrying a 32KB SRAM as chip 0** (measured 2026-09-04) | the second 8KB of chip 0 ✅ — on the battery | chip 1 = a distinct 8KB, no battery |
 
 MiSTer is linear simply because its NES core's `MMC5.sv` concatenates
 `{prgsel[2], prgsel[1:0]}` and leaves it at that. **No commercial MMC5 game exercises
@@ -72,3 +73,6 @@ or more. It becomes necessary if you target 8KB-only hardware.)
 
 - NESdev wiki, [MMC5](https://www.nesdev.org/wiki/MMC5) — bit layout of `$5113`/`$5114` (`RAAA AaAA`)
 - Measured on two machines: MiSTer FPGA NES core and EverDrive N8 PRO (2026-08-23)
+- Measured on a real MMC5 cartridge, an ETROM donor board (2026-09-04): `$5113` = 0-3 read four
+  different pages (chip 0 is 32KB), 4-7 read the same 8KB (chip 1). A 16,029-byte program
+  survived a power cycle after `BACKUP`, which only works if the probe settled on `$01`

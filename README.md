@@ -101,6 +101,7 @@ Python 3 standard library only; no dependencies.
 |---|---|---|---|
 | MiSTer FPGA (NES core) | ✅ | ✅ | ✅ save, power cycle, load |
 | EverDrive N8 PRO | ✅ | ✅ | — |
+| Real MMC5 cartridge (an ETROM donor board, the ROM written to its flash) | — | ✅ boots, ran a 16,029-byte program, kept it across a power cycle with `BACKUP` | — |
 | Real Famicom + RAM adapter | — | — | ✅ `SAVE` / `LOAD` by hand |
 | Unmodified original cart | ❌ mirrors back | ❌ | — |
 

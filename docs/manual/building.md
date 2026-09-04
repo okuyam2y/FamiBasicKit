@@ -108,8 +108,24 @@ middle of your own program.
 |---|---|---|---|
 | MiSTer FPGA (NES core) | ✅ | ✅ `16374 BYTES FREE` | ✅ save, power cycle, load |
 | EverDrive N8 PRO | ✅ `8182 BYTES FREE` | ✅ | — |
+| Real MMC5 cartridge (an ETROM donor board, the ROM written to its flash; 2026-09-04) | — | ✅ `16374 BYTES FREE`, a 16,029-byte program loaded from tape ran, and survived a power cycle after `BACKUP` (`BASIC HOT START`) | — |
 | Real Famicom + RAM adapter | — | — | ✅ `SAVE` / `LOAD` by hand |
 | Unmodified original cart | ❌ mirrors back | ❌ | — |
 
 **Writing to a real disk through a drive has never been done here.** Every round trip so
 far went through a RAM adapter; no disk motor has turned.
+
+### Keeping a program across power-off on a real cartridge
+
+V3 does not keep a program just because the SRAM has a battery. At power-on it looks for a
+mark in the first bytes of the area (`$6001` = `$4C` plus the end-of-program pointer at
+`$6002/$6003`), restores the program when the mark is there, and then erases the mark. **The
+only thing that writes the mark is the `BACKUP` command.** On the original cartridge `BACKUP`
+then waits for you to flip the backup switch (which write-protects the SRAM) before it tells
+you to turn the power off.
+
+A board without that switch never leaves the wait on its own. The mark is already written
+by the time the message appears, so: type `BACKUP`, press **STOP** when the message shows, do
+not edit the program afterwards, and turn the power off. On the next power-on the screen
+says `BASIC HOT START` and the program is back. Measured on the board above: a 16,029-byte
+program came back with the right answer, so the whole 16KB sat on the battery-backed chip.
